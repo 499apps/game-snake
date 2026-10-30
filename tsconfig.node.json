@@ -1,0 +1,7 @@
+{
+  "extends": "./src/kit/config/tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/kit/smoke", "src/kit/vite-kit.ts", "vite.config.ts", "vitest.config.ts", "playwright.config.ts", "e2e"]
+}

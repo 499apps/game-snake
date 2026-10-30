@@ -1,0 +1,11 @@
+node_modules
+dist
+test-results
+playwright-report
+e2e-results
+blob-report
+coverage
+pnpm-lock.yaml
+public
+src/kit
+e2e/screenshots

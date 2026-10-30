@@ -1,0 +1,8 @@
+{
+  "extends": "./src/kit/config/tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["vite/client"]
+  },
+  "include": ["src"],
+  "exclude": ["src/kit/smoke", "src/kit/scripts", "src/kit/vite-kit.ts", "node_modules", "dist"]
+}

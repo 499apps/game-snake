@@ -1,0 +1,10 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+e2e-results/
+blob-report/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
