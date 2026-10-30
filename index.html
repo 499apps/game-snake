@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
     <title>Snake - 499apps Games</title>
-    <meta name="description" content="Guide a friendly 3D snake to the apples. No ads, no tracking. Works offline.">
+    <meta name="description" content="Guide a friendly 3D snake to the fruit. No ads, no tracking. Works offline.">
     <meta name="theme-color" content="#1b1740">
     <meta name="color-scheme" content="dark">
     <meta name="mobile-web-app-capable" content="yes">
@@ -22,8 +22,10 @@
     <main class="g499-app game-app">
       <h1 class="g499-sr-only">Snake</h1>
       <div class="game-stage" id="stage"></div>
+      <div class="snake-pops" id="pops" aria-hidden="true"></div>
+
       <div class="g499-hud" aria-live="polite">
-        <span class="g499-hud-pill" aria-label="Apples eaten">
+        <span class="g499-hud-pill" aria-label="Score">
           <span class="g499-icon" aria-hidden="true"><svg class="g499-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13.5" r="6.5"/><path d="M12 7c0-2 1-3.5 3-4"/></svg></span>
           <span class="game-hud-value" id="score">0</span>
         </span>
@@ -32,6 +34,22 @@
           <span class="game-hud-value" id="best">0</span>
         </span>
       </div>
+
+      <div class="snake-start" id="start">
+        <button type="button" class="snake-start-btn" id="start-btn" aria-label="Start">
+          <span class="snake-start-play" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l11-7z"/></svg></span>
+          <span class="snake-mode-badge" id="start-mode" aria-hidden="true"></span>
+        </button>
+      </div>
+
+      <div class="snake-dpad" id="dpad" hidden>
+        <button type="button" class="snake-pad is-up" data-dir="up" aria-label="Up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m6 11 6-6 6 6"/></svg></button>
+        <button type="button" class="snake-pad is-left" data-dir="left" aria-label="Left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m6 11 6-6 6 6"/></svg></button>
+        <button type="button" class="snake-pad is-mid" id="pad-primary" aria-label="Start or pause"><span class="snake-pad-icon" id="pad-primary-icon" aria-hidden="true"></span></button>
+        <button type="button" class="snake-pad is-right" data-dir="right" aria-label="Right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m6 11 6-6 6 6"/></svg></button>
+        <button type="button" class="snake-pad is-down" data-dir="down" aria-label="Down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m6 11 6-6 6 6"/></svg></button>
+      </div>
+
       <div class="g499-overlay" id="pause" hidden>
         <div class="g499-card">
           <h2>Paused</h2>
@@ -40,6 +58,27 @@
           </button>
         </div>
       </div>
+
+      <div class="g499-overlay snake-over" id="over" hidden>
+        <div class="g499-card snake-over-card">
+          <span class="snake-over-icon" id="over-icon" aria-hidden="true"></span>
+          <div class="snake-over-scores">
+            <span class="g499-hud-pill" aria-label="Score">
+              <span class="g499-icon" aria-hidden="true"><svg class="g499-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13.5" r="6.5"/><path d="M12 7c0-2 1-3.5 3-4"/></svg></span>
+              <span class="game-hud-value" id="over-score">0</span>
+            </span>
+            <span class="g499-hud-pill snake-over-best" id="over-best-pill" aria-label="Best">
+              <span class="g499-icon" aria-hidden="true"><svg class="g499-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg></span>
+              <span class="game-hud-value" id="over-best">0</span>
+            </span>
+          </div>
+          <button type="button" class="g499-button snake-again" id="again" aria-label="Play again">
+            <span class="game-pause-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4v5h5"/></svg></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="snake-safe-probe" id="safe-probe" aria-hidden="true"></div>
     </main>
   </body>
 </html>

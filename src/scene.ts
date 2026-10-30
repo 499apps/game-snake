@@ -1,295 +1,611 @@
 /**
- * Snake scaffold scene: a glossy toy board on a playroom rug, a candy snake that glides from
- * cell to cell and a bobbing apple. G2 replaces this with the full game.
+ * Snake scene: a glossy board on a playroom rug, a candy snake built from one smooth tube with a
+ * cute face, bouncy glowing food, particle bursts and a gentle follow camera. The scene never
+ * changes the rules: each frame it draws the controller's state, gliding between cells with the
+ * render interpolation factor.
  */
 import * as THREE from 'three';
-import type { Direction } from './kit/input';
 import { ParticleSystem } from './kit/particles';
 import type { Rng } from './kit/prng';
 import type { KitRenderer } from './kit/renderer';
 import {
   addStudioLights,
   candyMaterial,
+  clamp,
   damp,
+  easeInOutSine,
+  lerp,
   makeRoom,
-  roundedBox,
 } from './kit/scene-helpers';
-import { mixHex, palette } from './kit/theme';
-import { MAX_LENGTH, advance, createPreviewState, queueTurn, type PreviewState } from './game/preview-sim';
+import { funColors, mixHex, palette } from './kit/theme';
+import type { Direction } from './kit/input';
 import type { Cell } from './game/grid';
+import { BOARD_BOTTOM, Board, TILE_TOP, makeToys } from './game/board';
+import { FOOD_COLORS, Food, foodKindFor, makeGlowTexture } from './game/food';
+import { boardPoints, frameCamera, pitchFor, type Insets } from './game/framing';
+import { HeadRig } from './game/head';
+import { Spine } from './game/spine';
+import { SnakeTube } from './game/tube';
+import { MODE_RULES, type Mode, type SnakeState } from './logic';
 
-/** Seconds per board step. */
-const STEP = 0.18;
+/** Body tube radius at the neck (cells). */
+const RADIUS = 0.3;
+/** Distance between tube rings (cells). */
+const SPACING = 0.125;
+const RADIAL = 14;
+/** Most copies of the body drawn at once (wrap-around seams). */
+const MAX_COPIES = 9;
+const HEAD_Y = TILE_TOP + 0.37;
+/** Coil spiral: inner radius and gap between turns. */
+const COIL_R0 = 0.3;
+const COIL_B = 0.82 / (Math.PI * 2);
 
-export interface SnakeSceneOptions {
+export interface SceneOptions {
   reducedMotion: boolean;
-  onEat?: (eaten: number) => void;
+  size: number;
+}
+
+/** What the scene draws this frame. */
+export interface SceneView {
+  state: SnakeState;
+  prevBody: readonly Cell[];
+  alpha: number;
+  paused: boolean;
+  /** Seconds since the round ended. */
+  endedFor: number;
+}
+
+const YAW: Record<Direction, number> = { up: Math.PI, down: 0, left: -Math.PI / 2, right: Math.PI / 2 };
+
+/** Wrap a number into [-half, half). */
+function wrapInto(v: number, half: number, size: number): number {
+  if (v > half) return v - size;
+  if (v < -half) return v + size;
+  return v;
 }
 
 export class SnakeScene {
   private readonly kit: KitRenderer;
-  private readonly rng: Rng;
-  private readonly reduced: boolean;
-  private readonly onEat: ((eaten: number) => void) | undefined;
-  private sim: PreviewState;
-  private prevBody: Cell[];
-  private acc = 0;
-  private hop = 0;
-  private pop = 0;
-  private paused = false;
-  private readonly board = new THREE.Group();
-  private readonly segments: THREE.Mesh[] = [];
-  private readonly head = new THREE.Group();
-  private readonly apple = new THREE.Group();
+  private readonly motion: number;
+  private readonly size: number;
+  private readonly half: number;
+  private readonly board: Board;
+  private readonly food: Food;
+  private readonly head: HeadRig;
+  private readonly tube: SnakeTube;
+  private readonly bodyMat: THREE.MeshPhysicalMaterial;
+  private readonly copies: THREE.Mesh[] = [];
+  private readonly spine: Spine;
   private readonly particles: ParticleSystem;
-  private readonly lookTarget = new THREE.Vector3(0, 0, 0.4);
+  private readonly zzz: Array<{ group: THREE.Group; mat: THREE.MeshStandardMaterial }> = [];
+  private readonly baseBloom: number;
 
-  constructor(kit: KitRenderer, rng: Rng, o: SnakeSceneOptions) {
+  // Scratch buffers (no allocation per frame).
+  private readonly pts: Float32Array;
+  private readonly fx: Float32Array;
+  private readonly fz: Float32Array;
+  private readonly ftx: Float32Array;
+  private readonly ftz: Float32Array;
+  private readonly fr: Float32Array;
+  private readonly fy: Float32Array;
+  private readonly v1 = new THREE.Vector3();
+  private readonly v2 = new THREE.Vector3();
+
+  // Animation state.
+  private wrap = false;
+  private yaw = YAW.right;
+  private eatPulse = 0;
+  private gulp = 0;
+  private shake = 0;
+  private bumpDir: Direction | null = null;
+  private bulges: number[] = [];
+  private readonly coilCenter = new THREE.Vector2();
+  private readonly follow = new THREE.Vector3();
+  private readonly basePos = new THREE.Vector3();
+  private readonly baseQuat = new THREE.Quaternion();
+  private lastHead = new THREE.Vector3();
+
+  constructor(kit: KitRenderer, rng: Rng, o: SceneOptions) {
     this.kit = kit;
-    this.rng = rng;
-    this.reduced = o.reducedMotion;
-    this.onEat = o.onEat;
-    this.sim = createPreviewState(rng);
-    this.prevBody = this.sim.body.map((c) => ({ ...c }));
+    this.motion = o.reducedMotion ? 0 : 1;
+    this.size = o.size;
+    this.half = o.size / 2;
     const scene = kit.scene;
+    kit.renderer.localClippingEnabled = true;
+    this.baseBloom = kit.bloomPass.strength;
 
-    const lights = addStudioLights(scene, { shadowArea: 9, shadowMapSize: kit.settings.shadowMapSize });
+    const lights = addStudioLights(scene, {
+      shadowArea: this.half + 2.5,
+      shadowMapSize: kit.settings.shadowMapSize,
+    });
     lights.key.castShadow = kit.settings.shadows;
     kit.shadowLights.push(lights.key);
+
     const room = makeRoom(scene, {
-      floorColor: mixHex(palette.plum, palette.night, 0.2),
-      wallColor: mixHex(palette.night, palette.plum, 0.4),
-      rugColor: mixHex(palette.mint, palette.plum, 0.55),
+      floorColor: mixHex(palette.plum, palette.night, 0.35),
+      wallColor: mixHex(palette.night, palette.plum, 0.5),
+      rugColor: mixHex(palette.lavender, palette.plum, 0.6),
     });
-    room.position.set(0, -0.45, 6);
+    room.position.y = BOARD_BOTTOM;
+    const toys = makeToys(this.half + 0.5);
+    scene.add(toys);
 
-    this.buildBoard();
-    this.buildSnake();
-    this.buildApple();
-    scene.add(this.board);
+    this.board = new Board(o.size);
+    scene.add(this.board.group);
 
-    this.particles = new ParticleSystem(rng, { max: 120, particleScale: kit.settings.particleScale });
+    const glowTex = makeGlowTexture();
+    this.food = new Food(glowTex);
+    scene.add(this.food.group);
+
+    // Body: one tube drawn in up to MAX_COPIES places, clipped to the board edges, so a snake
+    // that wraps around slides out of one side and into the other.
+    const maxPoints = o.size * o.size + 2;
+    this.spine = new Spine(maxPoints, SPACING);
+    this.pts = new Float32Array(maxPoints * 2);
+    const ms = this.spine.maxSamples;
+    this.fx = new Float32Array(ms);
+    this.fz = new Float32Array(ms);
+    this.ftx = new Float32Array(ms);
+    this.ftz = new Float32Array(ms);
+    this.fr = new Float32Array(ms);
+    this.fy = new Float32Array(ms);
+    this.tube = new SnakeTube(ms, RADIAL, {
+      main: palette.lime,
+      stripe: mixHex(palette.mint, palette.lime, 0.25),
+      belly: palette.cream,
+    });
+    const h = this.half;
+    this.bodyMat = new THREE.MeshPhysicalMaterial({
+      color: palette.white,
+      vertexColors: true,
+      roughness: 0.3,
+      metalness: 0,
+      clearcoat: 1,
+      clearcoatRoughness: 0.08,
+      sheen: 0.25,
+      sheenColor: new THREE.Color(palette.white),
+      envMapIntensity: 0.85,
+      clippingPlanes: [
+        new THREE.Plane(new THREE.Vector3(-1, 0, 0), h),
+        new THREE.Plane(new THREE.Vector3(1, 0, 0), h),
+        new THREE.Plane(new THREE.Vector3(0, 0, -1), h),
+        new THREE.Plane(new THREE.Vector3(0, 0, 1), h),
+      ],
+      clipShadows: true,
+    });
+    for (let i = 0; i < MAX_COPIES; i++) {
+      const mesh = new THREE.Mesh(this.tube.geometry, this.bodyMat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+      mesh.visible = i === 0;
+      this.copies.push(mesh);
+      scene.add(mesh);
+    }
+
+    this.head = new HeadRig(candyMaterial(palette.lime, { roughness: 0.3 }));
+    scene.add(this.head.group);
+
+    this.particles = new ParticleSystem(rng, { max: 180, particleScale: kit.settings.particleScale });
     scene.add(this.particles.mesh);
-    this.syncInstant();
+
+    this.buildZzz(scene);
+    this.board.setGlow(1);
   }
 
-  private toWorld(c: Cell, out: THREE.Vector3): THREE.Vector3 {
-    const half = (this.sim.size - 1) / 2;
-    return out.set(c.x - half, 0.32, c.y - half);
+  private buildZzz(scene: THREE.Scene): void {
+    const bar = new THREE.BoxGeometry(0.3, 0.07, 0.07);
+    const diag = new THREE.BoxGeometry(0.4, 0.07, 0.07);
+    for (let i = 0; i < 3; i++) {
+      const mat = new THREE.MeshStandardMaterial({
+        color: palette.lavender,
+        emissive: new THREE.Color(palette.lavender),
+        emissiveIntensity: 0.6,
+        roughness: 0.4,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+      const g = new THREE.Group();
+      const top = new THREE.Mesh(bar, mat);
+      top.position.y = 0.14;
+      const bottom = new THREE.Mesh(bar, mat);
+      bottom.position.y = -0.14;
+      const mid = new THREE.Mesh(diag, mat);
+      mid.rotation.z = Math.PI / 4;
+      g.add(top, bottom, mid);
+      g.visible = false;
+      scene.add(g);
+      this.zzz.push({ group: g, mat });
+    }
   }
 
-  private buildBoard(): void {
-    const n = this.sim.size;
-    const base = new THREE.Mesh(
-      roundedBox(n + 0.8, 0.45, n + 0.8, 0.22, 4),
-      candyMaterial(mixHex(palette.plum, palette.lavender, 0.25), { roughness: 0.4 }),
-    );
-    base.position.y = -0.2;
-    base.receiveShadow = true;
-    base.castShadow = true;
-    this.board.add(base);
-    const tiles = new THREE.InstancedMesh(
-      roundedBox(0.92, 0.12, 0.92, 0.05, 2),
-      candyMaterial(palette.white, { roughness: 0.35, clearcoat: 0.7 }),
-      n * n,
-    );
-    const m = new THREE.Matrix4();
-    const a = new THREE.Color(mixHex(palette.mint, palette.night, 0.15));
-    const b = new THREE.Color(mixHex(palette.lime, palette.night, 0.25));
-    const half = (n - 1) / 2;
-    for (let y = 0; y < n; y++) {
-      for (let x = 0; x < n; x++) {
-        const i = y * n + x;
-        m.makeTranslation(x - half, 0.06, y - half);
-        tiles.setMatrixAt(i, m);
-        tiles.setColorAt(i, (x + y) % 2 === 0 ? a : b);
+  /** World position of a cell centre at height y. */
+  cellToWorld(c: Cell, y: number, out: THREE.Vector3): THREE.Vector3 {
+    const h = (this.size - 1) / 2;
+    return out.set(c.x - h, y, c.y - h);
+  }
+
+  /** CSS pixel position (relative to the canvas) of a cell, for screen-space pops. */
+  cellToScreen(c: Cell): { x: number; y: number } {
+    const p = this.cellToWorld(c, HEAD_Y + 0.4, this.v1).project(this.kit.camera);
+    return { x: ((p.x + 1) / 2) * this.kit.width, y: ((1 - p.y) / 2) * this.kit.height };
+  }
+
+  setMode(mode: Mode): void {
+    this.wrap = MODE_RULES[mode].wrap;
+    this.board.setWrap(this.wrap);
+  }
+
+  /** A new round: snap everything into place (no pop-in, so the first frame is stable). */
+  reset(s: SnakeState): void {
+    this.setMode(s.mode);
+    this.yaw = YAW[s.dir];
+    this.eatPulse = 0;
+    this.gulp = 0;
+    this.shake = 0;
+    this.bumpDir = null;
+    this.bulges = [];
+    this.food.setKind(foodKindFor(s.eaten));
+    if (s.food) {
+      this.cellToWorld(s.food, 0, this.v1);
+      this.food.place(this.v1.x, this.v1.z, false);
+    }
+    this.food.setVisible(s.food !== null);
+    for (const z of this.zzz) z.group.visible = false;
+  }
+
+  onEat(cell: Cell, s: SnakeState): void {
+    const kindEaten = foodKindFor(s.eaten - 1);
+    const pos = this.cellToWorld(cell, 0.5, this.v1);
+    const big = s.combo >= 3;
+    this.particles.burst({
+      position: pos,
+      color: FOOD_COLORS[kindEaten],
+      count: this.motion ? (big ? 34 : 24) : 6,
+      speed: 3.2,
+      life: 0.75,
+      size: 0.075,
+    });
+    if (big && this.motion) {
+      this.particles.burst({ position: pos, color: palette.lemon, count: 16, speed: 4.2, life: 0.6, size: 0.05 });
+    }
+    this.eatPulse = 1;
+    this.gulp = 1;
+    this.bulges.push(s.tick);
+    this.food.setKind(foodKindFor(s.eaten));
+    if (s.food) {
+      this.cellToWorld(s.food, 0, this.v1);
+      this.food.place(this.v1.x, this.v1.z, true);
+    }
+    this.food.setVisible(s.food !== null);
+  }
+
+  onEnd(s: SnakeState): void {
+    if (s.cause === 'wall' || s.cause === 'self') {
+      this.bumpDir = s.dir;
+      this.shake = this.motion;
+    }
+    if (s.cause === 'full') {
+      const at = this.lastHead.clone();
+      at.y = HEAD_Y + 0.4;
+      for (const c of funColors) {
+        this.particles.burst({ position: at, color: c, count: this.motion ? 14 : 3, speed: 5, life: 1.1, size: 0.07 });
       }
     }
-    tiles.receiveShadow = true;
-    this.board.add(tiles);
-  }
-
-  private buildSnake(): void {
-    const bodyMat = candyMaterial(palette.lime, { emissive: palette.mint, emissiveIntensity: 0.08 });
-    const geo = new THREE.SphereGeometry(0.36, 28, 20);
-    for (let i = 0; i < MAX_LENGTH; i++) {
-      const seg = new THREE.Mesh(geo, bodyMat);
-      seg.castShadow = true;
-      seg.visible = false;
-      this.segments.push(seg);
-      this.board.add(seg);
+    // Coil around the body's middle, kept on the board.
+    let sx = 0;
+    let sz = 0;
+    const n = Math.max(1, this.spine.count);
+    for (let i = 0; i < n; i++) {
+      sx += this.fx[i] as number;
+      sz += this.fz[i] as number;
     }
-    const skull = new THREE.Mesh(new THREE.SphereGeometry(0.44, 32, 24), bodyMat);
-    skull.scale.set(1, 0.85, 1.1);
-    skull.castShadow = true;
-    this.head.add(skull);
-    const white = candyMaterial(palette.white, { roughness: 0.2 });
-    const ink = candyMaterial(palette.ink, { roughness: 0.1 });
-    for (const side of [-1, 1]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.14, 20, 14), white);
-      eye.position.set(side * 0.2, 0.22, 0.26);
-      const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.07, 16, 12), ink);
-      pupil.position.set(side * 0.2, 0.24, 0.38);
-      this.head.add(eye, pupil);
-    }
-    const cheekMat = candyMaterial(palette.bubblegum, { roughness: 0.5 });
-    for (const side of [-1, 1]) {
-      const cheek = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8), cheekMat);
-      cheek.position.set(side * 0.3, 0.02, 0.3);
-      cheek.scale.set(1, 0.6, 0.5);
-      this.head.add(cheek);
-    }
-    this.board.add(this.head);
+    const rmax = this.coilRadius(this.spine.length);
+    const limit = this.half - 0.55 - rmax;
+    if (limit <= 0) this.coilCenter.set(0, 0);
+    else this.coilCenter.set(clamp(sx / n, -limit, limit), clamp(sz / n, -limit, limit));
   }
 
-  private buildApple(): void {
-    const fruit = new THREE.Mesh(
-      new THREE.SphereGeometry(0.32, 28, 20),
-      candyMaterial(palette.coral, { emissive: palette.coral, emissiveIntensity: 0.15 }),
-    );
-    fruit.scale.set(1, 0.92, 1);
-    fruit.castShadow = true;
-    const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.12, 14, 10), candyMaterial(palette.lime));
-    leaf.scale.set(1.5, 0.35, 0.8);
-    leaf.position.set(0.1, 0.33, 0);
-    leaf.rotation.z = -0.5;
-    const stem = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.03, 0.035, 0.18, 10),
-      candyMaterial(mixHex(palette.tangerine, palette.ink, 0.5)),
-    );
-    stem.position.y = 0.32;
-    this.apple.add(fruit, leaf, stem);
-    this.board.add(this.apple);
+  private coilPhi(d: number): number {
+    return (-COIL_R0 + Math.sqrt(COIL_R0 * COIL_R0 + 2 * COIL_B * Math.max(0, d))) / COIL_B;
   }
 
-  get state(): PreviewState {
-    return this.sim;
+  private coilRadius(length: number): number {
+    return COIL_R0 + COIL_B * this.coilPhi(length);
   }
 
-  get isPaused(): boolean {
-    return this.paused;
-  }
-
-  setPaused(p: boolean): void {
-    this.paused = p;
-  }
-
-  steer(dir: Direction): void {
-    this.sim = queueTurn(this.sim, dir);
-  }
-
-  /** A happy hop: the main action in the scaffold. */
-  bounce(): void {
-    this.hop = 1;
-  }
-
-  reset(): void {
-    this.sim = createPreviewState(this.rng);
-    this.prevBody = this.sim.body.map((c) => ({ ...c }));
-    this.acc = 0;
-    this.syncInstant();
-  }
-
-  /** Fit the board to the view in portrait and landscape. */
-  resize(width: number, height: number): void {
-    const aspect = width / Math.max(1, height);
+  /** Fit the board under the HUD and beside the d-pad, in portrait and landscape. */
+  resize(width: number, height: number, insets: Insets): void {
     const cam = this.kit.camera;
-    const portrait = aspect < 1;
-    const span = this.sim.size + 2.2;
-    const vFov = (cam.fov * Math.PI) / 180;
-    const fitH = span / 2 / Math.tan(vFov / 2);
-    const fitW = span / 2 / (Math.tan(vFov / 2) * aspect);
-    const dist = Math.max(fitH, fitW) * (portrait ? 1.0 : 0.95);
-    cam.position.set(0, dist * 0.82, dist * 0.62);
-    cam.lookAt(this.lookTarget);
+    const b = this.board;
+    frameCamera(cam, width, height, {
+      points: boardPoints(b.outerHalf, b.rimTop, BOARD_BOTTOM, 0.75),
+      target: new THREE.Vector3(0, 0, 0),
+      pitch: pitchFor(width / Math.max(1, height)),
+      insets,
+    });
+    this.basePos.copy(cam.position);
+    this.baseQuat.copy(cam.quaternion);
   }
 
-  private syncInstant(): void {
-    this.toWorld(this.sim.apple, this.apple.position);
-    this.place(1);
-  }
+  update(dt: number, t: number, v: SceneView): void {
+    const s = v.state;
+    const over = s.phase === 'over';
+    const sleepy = over && s.cause !== 'full';
+    const coil = sleepy && this.motion > 0 ? easeInOutSine((v.endedFor - 0.35) / 1.4) : 0;
+    const asleep = sleepy && v.endedFor > 0.45;
 
-  private place(t: number): void {
-    const body = this.sim.body;
-    const prev = this.prevBody;
-    const a = new THREE.Vector3();
-    const b = new THREE.Vector3();
-    const p = new THREE.Vector3();
-    for (let i = 0; i < this.segments.length; i++) {
-      const seg = this.segments[i] as THREE.Mesh;
-      const cur = body[i];
-      if (!cur || i === 0) {
-        seg.visible = false;
-        continue;
+    this.buildSpine(s, v.prevBody, v.alpha);
+    const count = this.spine.count;
+    const L = this.spine.length;
+
+    // Positions (optionally blended into the sleepy coil) and tangents.
+    if (coil > 0) {
+      for (let i = 0; i < count; i++) {
+        const d = L - (this.spine.s[i] as number);
+        const phi = this.coilPhi(d);
+        const r = COIL_R0 + COIL_B * phi;
+        const cx = this.coilCenter.x + Math.cos(phi) * r;
+        const cz = this.coilCenter.y + Math.sin(phi) * r;
+        this.fx[i] = lerp(this.spine.x[i] as number, cx, coil);
+        this.fz[i] = lerp(this.spine.z[i] as number, cz, coil);
       }
-      const from = prev[i] ?? prev[prev.length - 1] ?? cur;
-      this.toWorld(from, a);
-      this.toWorld(cur, b);
-      // Snap across the wrap seam instead of sliding through the board.
-      if (a.distanceTo(b) > 1.5) a.copy(b);
-      p.lerpVectors(a, b, t);
-      seg.position.copy(p);
-      const taper = 1 - (i / MAX_LENGTH) * 0.35;
-      seg.scale.setScalar(taper);
-      seg.visible = true;
-    }
-    const headCell = body[0] as Cell;
-    const headFrom = prev[0] ?? headCell;
-    this.toWorld(headFrom, a);
-    this.toWorld(headCell, b);
-    if (a.distanceTo(b) > 1.5) a.copy(b);
-    p.lerpVectors(a, b, t);
-    this.head.position.copy(p);
-  }
-
-  update(dt: number, t: number): void {
-    if (!this.paused) {
-      this.acc += dt;
-      while (this.acc >= STEP) {
-        this.acc -= STEP;
-        this.prevBody = this.sim.body.map((c) => ({ ...c }));
-        const r = advance(this.sim, this.rng);
-        this.sim = r.state;
-        if (r.ate) {
-          const pos = new THREE.Vector3();
-          this.apple.getWorldPosition(pos);
-          this.particles.burst({
-            position: pos,
-            color: palette.coral,
-            count: this.reduced ? 8 : 28,
-            speed: 3,
-            life: 0.7,
-            size: 0.08,
-          });
-          this.pop = 1;
-          this.toWorld(this.sim.apple, this.apple.position);
-          this.onEat?.(this.sim.eaten);
+      for (let i = 0; i < count; i++) {
+        const a = Math.max(0, i - 1);
+        const b = Math.min(count - 1, i + 1);
+        const dx = (this.fx[b] as number) - (this.fx[a] as number);
+        const dz = (this.fz[b] as number) - (this.fz[a] as number);
+        const len = Math.hypot(dx, dz);
+        if (len > 1e-6) {
+          this.ftx[i] = dx / len;
+          this.ftz[i] = dz / len;
+        } else {
+          this.ftx[i] = this.spine.tx[i] as number;
+          this.ftz[i] = this.spine.tz[i] as number;
         }
       }
+    } else {
+      this.fx.set(this.spine.x.subarray(0, count));
+      this.fz.set(this.spine.z.subarray(0, count));
+      this.ftx.set(this.spine.tx.subarray(0, count));
+      this.ftz.set(this.spine.tz.subarray(0, count));
     }
-    const k = this.paused ? 1 : Math.min(1, this.acc / STEP);
-    this.place(k);
 
-    // Face the travel direction.
-    const yaw = { up: Math.PI, down: 0, left: -Math.PI / 2, right: Math.PI / 2 }[this.sim.dir];
-    let diff = yaw - this.head.rotation.y;
-    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-    this.head.rotation.y += diff * (1 - Math.exp(-14 * dt));
+    // Radii: taper, rounded tail tip, swallowed-food bulges, eat swell, sleepy breathing.
+    this.eatPulse = Math.max(0, this.eatPulse - dt * 2.4);
+    this.gulp = Math.max(0, this.gulp - dt * 3.2);
+    const bulgeAt: number[] = [];
+    const kept: number[] = [];
+    for (const tick of this.bulges) {
+      const pos = s.tick - tick - 1 + v.alpha;
+      if (pos < L + 0.5) {
+        kept.push(tick);
+        bulgeAt.push(pos);
+      }
+    }
+    this.bulges = kept;
+    const breathe = asleep ? Math.sin(t * 1.8) * 0.045 * this.motion : 0;
+    const swell = 1 + 0.07 * this.eatPulse * this.motion;
+    for (let i = 0; i < count; i++) {
+      const sa = this.spine.s[i] as number;
+      const u = L > 0 ? sa / L : 0;
+      let r = RADIUS * (1 - 0.32 * u);
+      const toTip = L - sa;
+      if (toTip < 0.7) r *= Math.sqrt(Math.max(0, toTip) / 0.7);
+      for (const pos of bulgeAt) {
+        const amp = 0.1 * clamp(pos + 1, 0, 1) * (1 - 0.5 * u);
+        const c = Math.max(pos, 0.45);
+        const d = sa - c;
+        r += amp * Math.exp(-(d * d) / 0.1);
+      }
+      r *= swell * (1 + breathe * Math.sin(sa * 0.9 - t * 1.8));
+      r = Math.max(0.012, r);
+      this.fr[i] = r;
+      this.fy[i] = TILE_TOP + r * 0.92;
+    }
+    this.tube.update({
+      x: this.fx,
+      z: this.fz,
+      tx: this.ftx,
+      tz: this.ftz,
+      s: this.spine.s,
+      radius: this.fr,
+      y: this.fy,
+      count,
+    });
+    this.placeCopies(count);
 
-    this.hop = Math.max(0, this.hop - dt * 3);
-    const hopY = Math.sin(this.hop * Math.PI) * 0.5;
-    this.head.position.y += hopY;
-    const squash = Math.sin(this.hop * Math.PI * 2) * 0.12;
-    this.head.scale.set(1 + squash, 1 - squash, 1 + squash);
+    // Head.
+    const hx = count > 0 ? (this.fx[0] as number) : 0;
+    const hz = count > 0 ? (this.fz[0] as number) : 0;
+    const px = this.wrap ? wrapInto(hx, this.half, this.size) : hx;
+    const pz = this.wrap ? wrapInto(hz, this.half, this.size) : hz;
+    const fwdX = -(this.ftx[0] as number);
+    const fwdZ = -(this.ftz[0] as number);
+    const targetYaw = Math.atan2(fwdX, fwdZ);
+    let dy = targetYaw - this.yaw;
+    dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    this.yaw += dy * (1 - Math.exp(-16 * dt));
+    const hg = this.head.group;
+    hg.position.set(px, HEAD_Y, pz);
+    // Wall bump: a soft nudge toward the wall, then back.
+    if (this.bumpDir && over) {
+      const k = clamp(v.endedFor / 0.35, 0, 1);
+      const push = Math.sin(k * Math.PI) * 0.2;
+      const dv = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[this.bumpDir];
+      hg.position.x += (dv[0] as number) * push;
+      hg.position.z += (dv[1] as number) * push;
+    }
+    if (asleep) hg.position.y -= 0.06;
+    else if (s.phase === 'ready') hg.position.y += Math.sin(t * 2.2) * 0.025 * this.motion;
+    hg.rotation.set(0, this.yaw, asleep ? 0.22 * Math.min(1, (v.endedFor - 0.45) * 2) : 0);
+    // Shrink through the wrap-around portal at the board edge.
+    let portal = 1;
+    if (this.wrap) {
+      const edge = this.half - Math.max(Math.abs(px), Math.abs(pz));
+      portal = clamp((edge + 0.05) / 0.5, 0.3, 1);
+    }
+    const g = Math.sin(this.gulp * Math.PI);
+    hg.scale.setScalar(portal);
+    this.head.body.scale.set(1 + 0.16 * g, 1 - 0.13 * g, 1 + 0.08 * g);
+    this.lastHead.copy(hg.position);
 
-    const motion = this.reduced ? 0 : 1;
-    this.pop = Math.max(0, this.pop - dt * 2.5);
-    const bob = Math.sin(t * 2.4) * 0.08 * motion;
-    this.apple.position.y = 0.42 + bob;
-    this.apple.rotation.y += dt * 1.2 * motion;
-    const s = 1 + Math.sin(this.pop * Math.PI) * 0.4;
-    this.apple.scale.setScalar(damp(this.apple.scale.x, s, 20, dt || 1));
+    // Eyes follow the food; a blink every few seconds (a pure function of time).
+    hg.updateMatrixWorld(true);
+    const look = this.v2.set(0, 0, 1);
+    if (s.food && !over) {
+      this.cellToWorld(s.food, 0.45, this.v1);
+      hg.worldToLocal(this.v1);
+      look.copy(this.v1);
+    }
+    const bt = t % 3.7;
+    const blink = bt < 0.14 ? Math.sin((bt / 0.14) * Math.PI) : 0;
+    this.head.apply({ look, blink, asleep, gulp: g });
 
+    // Food.
+    this.food.update(dt, t, this.motion);
+
+    // Board glow: flashes on a meal, dims while asleep or paused.
+    let glow = 1 + 0.7 * this.eatPulse * this.motion;
+    if (sleepy) glow = lerp(glow, 0.5, clamp(v.endedFor / 1.2, 0, 1));
+    if (v.paused) glow *= 0.75;
+    this.board.setGlow(glow);
+    this.kit.bloomPass.strength = this.baseBloom * (1 + 0.45 * this.eatPulse * this.motion);
+
+    this.updateZzz(t, asleep, v.endedFor);
     this.particles.update(dt);
+    this.updateCamera(dt, t, px, pz);
+  }
+
+  /** Polyline through the body (head first) in unwrapped world coordinates. */
+  private buildSpine(s: SnakeState, prev: readonly Cell[], alpha: number): void {
+    const body = s.body;
+    const n = body.length;
+    const size = this.size;
+    const hc = (size - 1) / 2;
+    const pts = this.pts;
+    const head = body[0] as Cell;
+    // Unwrap each cell next to the previous one, so the chain has no jumps across the board.
+    let rx = head.x;
+    let ry = head.y;
+    const unwrap = (c: Cell): void => {
+      let x = c.x;
+      let y = c.y;
+      if (x - rx > size / 2) x -= size;
+      else if (x - rx < -size / 2) x += size;
+      if (y - ry > size / 2) y -= size;
+      else if (y - ry < -size / 2) y += size;
+      rx = x;
+      ry = y;
+    };
+    let k = 0;
+    const push = (x: number, y: number) => {
+      pts[k * 2] = x - hc;
+      pts[k * 2 + 1] = y - hc;
+      k++;
+    };
+    if (n < 2) {
+      push(head.x, head.y);
+      this.spine.build(pts, k);
+      return;
+    }
+    // Head: glides from the neck cell toward its cell.
+    unwrap(body[1] as Cell);
+    const nx = rx;
+    const ny = ry;
+    push(lerp(nx, head.x, alpha), lerp(ny, head.y, alpha));
+    rx = nx;
+    ry = ny;
+    push(nx, ny);
+    for (let i = 2; i < n; i++) {
+      unwrap(body[i] as Cell);
+      push(rx, ry);
+    }
+    // Tail: slides from the cell it is leaving toward its cell.
+    const tailX = rx;
+    const tailY = ry;
+    const prevTail = prev[prev.length - 1];
+    if (prevTail) {
+      unwrap(prevTail);
+      push(lerp(rx, tailX, alpha), lerp(ry, tailY, alpha));
+    }
+    this.spine.build(pts, k);
+  }
+
+  /** Show one body copy per board-sized offset that overlaps the board. */
+  private placeCopies(count: number): void {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let i = 0; i < count; i++) {
+      const x = this.fx[i] as number;
+      const z = this.fz[i] as number;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+    }
+    const h = this.half;
+    const sz = this.size;
+    let used = 0;
+    if (count > 0 && this.wrap) {
+      const r = RADIUS + 0.15;
+      const kx0 = Math.ceil((-h - maxX - r) / sz);
+      const kx1 = Math.floor((h - minX + r) / sz);
+      const kz0 = Math.ceil((-h - maxZ - r) / sz);
+      const kz1 = Math.floor((h - minZ + r) / sz);
+      for (let kx = kx0; kx <= kx1; kx++) {
+        for (let kz = kz0; kz <= kz1; kz++) {
+          const mesh = this.copies[used];
+          if (!mesh) break;
+          mesh.position.set(kx * sz, 0, kz * sz);
+          mesh.visible = true;
+          used++;
+        }
+      }
+    } else if (count > 0) {
+      const mesh = this.copies[0] as THREE.Mesh;
+      mesh.position.set(0, 0, 0);
+      mesh.visible = true;
+      used = 1;
+    }
+    for (let i = used; i < this.copies.length; i++) (this.copies[i] as THREE.Mesh).visible = false;
+  }
+
+  private updateZzz(t: number, asleep: boolean, endedFor: number): void {
+    const fadeIn = clamp((endedFor - 0.9) / 0.6, 0, 1);
+    const cam = this.kit.camera;
+    this.zzz.forEach((z, i) => {
+      z.group.visible = asleep && fadeIn > 0;
+      if (!z.group.visible) return;
+      // Reduced motion: three still Zs in a rising row.
+      const phase = this.motion ? (t * 0.45 + i / 3) % 1 : 0.2 + i * 0.27;
+      z.group.position.set(
+        this.lastHead.x + 0.35 + phase * 0.55,
+        this.lastHead.y + 0.55 + phase * 1.1,
+        this.lastHead.z - 0.1,
+      );
+      z.group.scale.setScalar(0.55 + phase * 0.6);
+      z.group.quaternion.copy(cam.quaternion);
+      z.mat.opacity = fadeIn * (this.motion ? Math.sin(phase * Math.PI) : 0.85);
+    });
+  }
+
+  private updateCamera(dt: number, t: number, hx: number, hz: number): void {
+    const cam = this.kit.camera;
+    const m = this.motion;
+    // Gentle follow: drift a little toward the head (none with reduced motion).
+    this.follow.x = damp(this.follow.x, hx * 0.07 * m, 2.5, dt);
+    this.follow.z = damp(this.follow.z, hz * 0.05 * m, 2.5, dt);
+    this.shake = Math.max(0, this.shake - dt * 2.2);
+    const sh = this.shake * this.shake * 0.08 * m;
+    cam.position.copy(this.basePos).add(this.follow);
+    cam.position.x += Math.sin(t * 47) * sh;
+    cam.position.y += Math.sin(t * 59 + 1.3) * sh * 0.6;
+    cam.quaternion.copy(this.baseQuat);
+    // A slight tilt toward the side the snake is on.
+    cam.rotateZ(-this.follow.x * 0.03);
   }
 }

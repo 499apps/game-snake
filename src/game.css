@@ -1,11 +1,21 @@
-/* Game page layout. Menus stay in the kit's left rail; the HUD sits top-right. */
+/*
+ * Snake page layout. Menus stay in the kit's left rail; the score HUD sits top-right, the
+ * d-pad bottom-right (landscape) or bottom-centre (portrait). All play controls are >= 56px.
+ */
 
-.game-stage {
+.game-stage,
+.snake-pops {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
   left: var(--g499-rail-inset);
+}
+
+.snake-pops {
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 15;
 }
 
 .game-hud-value {
@@ -32,4 +42,347 @@
 .game-pause-icon svg {
   width: 36px;
   height: 36px;
+}
+
+/* ---------- Start button (ready phase) ---------- */
+
+.snake-start {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 18;
+}
+
+.snake-start[hidden] {
+  display: none;
+}
+
+.snake-start-btn {
+  position: absolute;
+  left: var(--snake-start-x, 50%);
+  top: var(--snake-start-y, 70%);
+  width: 92px;
+  height: 92px;
+  margin: -46px 0 0 -46px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #c8ffd2, var(--g499-lime) 45%, #3fbf73);
+  color: var(--g499-ink);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.4),
+    0 0 0 6px rgba(140, 233, 154, 0.25),
+    inset 0 -4px 0 rgba(0, 0, 0, 0.18),
+    inset 0 3px 0 rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  pointer-events: auto;
+  animation: snake-breathe 1.8s ease-in-out infinite;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.snake-start-btn:focus-visible {
+  outline: 3px solid var(--g499-lemon);
+  outline-offset: 4px;
+}
+
+.snake-start-btn:active {
+  transform: scale(0.94);
+}
+
+.snake-start-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.snake-start-play svg {
+  width: 44px;
+  height: 44px;
+  margin-left: 6px;
+}
+
+.snake-mode-badge {
+  position: absolute;
+  right: -8px;
+  bottom: -6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--g499-ink);
+  color: var(--g499-lemon);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.snake-mode-badge svg {
+  width: 26px;
+  height: 26px;
+}
+
+@keyframes snake-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.07);
+  }
+}
+
+/* ---------- Combo pops (screen space) ---------- */
+
+.snake-pop {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(23, 19, 43, 0.75);
+  color: var(--g499-lemon);
+  font-size: 22px;
+  font-weight: 800;
+  white-space: nowrap;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3);
+  animation: snake-pop 900ms cubic-bezier(0.2, 1.4, 0.4, 1) forwards;
+}
+
+.snake-pop.is-combo {
+  background: linear-gradient(180deg, var(--g499-lemon), var(--g499-tangerine));
+  color: var(--g499-ink);
+  font-size: 26px;
+}
+
+@keyframes snake-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -30%) scale(0.4);
+  }
+  25% {
+    opacity: 1;
+    transform: translate(-50%, -60%) scale(1.15);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(-50%, -110%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -150%) scale(0.9);
+  }
+}
+
+/* ---------- D-pad ---------- */
+
+.snake-dpad {
+  position: absolute;
+  right: calc(16px + var(--g499-safe-right));
+  bottom: calc(16px + var(--g499-safe-bottom));
+  display: grid;
+  grid-template-columns: repeat(3, 64px);
+  grid-template-rows: repeat(3, 64px);
+  grid-template-areas:
+    '. up .'
+    'left mid right'
+    '. down .';
+  gap: 6px;
+  z-index: 25;
+  touch-action: none;
+}
+
+.snake-dpad[hidden] {
+  display: none;
+}
+
+@media (orientation: portrait) {
+  .snake-dpad {
+    right: auto;
+    left: calc(var(--g499-rail-inset) + (100% - var(--g499-rail-inset)) / 2);
+    transform: translateX(-50%);
+  }
+}
+
+.snake-pad {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 0;
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.08));
+  color: var(--g499-cream);
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: pointer;
+  touch-action: none;
+  transition: transform 90ms ease-out, background 90ms ease-out;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.snake-pad svg {
+  width: 34px;
+  height: 34px;
+}
+
+.snake-pad.is-up {
+  grid-area: up;
+}
+
+.snake-pad.is-down {
+  grid-area: down;
+}
+
+.snake-pad.is-down svg {
+  transform: rotate(180deg);
+}
+
+.snake-pad.is-left {
+  grid-area: left;
+}
+
+.snake-pad.is-left svg {
+  transform: rotate(-90deg);
+}
+
+.snake-pad.is-right {
+  grid-area: right;
+}
+
+.snake-pad.is-right svg {
+  transform: rotate(90deg);
+}
+
+.snake-pad.is-mid {
+  grid-area: mid;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #c8ffd2, var(--g499-lime) 50%, #3fbf73);
+  color: var(--g499-ink);
+}
+
+.snake-pad-icon {
+  display: flex;
+}
+
+.snake-pad.is-pressed,
+.snake-pad:active {
+  transform: scale(0.9);
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.snake-pad.is-mid.is-pressed,
+.snake-pad.is-mid:active {
+  background: var(--g499-mint);
+}
+
+.snake-pad:focus-visible {
+  outline: 3px solid var(--g499-lemon);
+  outline-offset: 2px;
+}
+
+/* ---------- Pause and game over ---------- */
+
+/* A tap anywhere on the pause backdrop resumes. */
+#pause {
+  cursor: pointer;
+}
+
+#pause .g499-card {
+  cursor: default;
+}
+
+/* The game-over card sits low and light so the sleeping snake stays in view. */
+.snake-over {
+  align-items: flex-end;
+  padding-bottom: calc(24px + var(--g499-safe-bottom));
+  background: rgba(10, 8, 24, 0.12);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.snake-over-card {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px;
+  padding: 18px 20px;
+  animation: snake-rise 420ms cubic-bezier(0.2, 1.3, 0.4, 1);
+}
+
+.snake-over-icon {
+  display: flex;
+  color: var(--g499-lavender);
+}
+
+.snake-over-icon svg {
+  width: 44px;
+  height: 44px;
+}
+
+.snake-over-icon.is-win {
+  color: var(--g499-lemon);
+}
+
+.snake-over-scores {
+  display: flex;
+  gap: 10px;
+}
+
+.snake-over-best.is-new {
+  background: linear-gradient(180deg, var(--g499-lemon), var(--g499-tangerine));
+  color: var(--g499-ink);
+}
+
+.snake-over-best.is-new .g499-icon {
+  color: var(--g499-ink);
+}
+
+.snake-again {
+  padding: 4px;
+  background: none;
+  box-shadow: none;
+}
+
+@keyframes snake-rise {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Reads the bottom safe-area inset in px (for camera framing). */
+.snake-safe-probe {
+  position: absolute;
+  width: 0;
+  height: 0;
+  visibility: hidden;
+  pointer-events: none;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snake-start-btn,
+  .snake-over-card {
+    animation: none;
+  }
+
+  .snake-pop {
+    animation: none;
+    transform: translate(-50%, -100%);
+  }
+
+  .snake-pad {
+    transition: none;
+  }
 }
