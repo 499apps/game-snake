@@ -40,9 +40,12 @@ export const MAX_QUEUED_TURNS = 2;
 export const COMBO_WINDOW = 16;
 export const MAX_COMBO = 5;
 
+/** Soft bushes on an optional garden board. */
+export const GARDEN_BUSHES = 6;
+
 export type Phase = 'ready' | 'playing' | 'over';
-/** Why a round ended: a wall bump, the snake's own body, or a full board (a win). */
-export type EndCause = 'wall' | 'self' | 'full';
+/** Why a round ended: a wall or bush bump, the snake's own body, or a full board (a win). */
+export type EndCause = 'wall' | 'bush' | 'self' | 'full';
 
 export interface SnakeState {
   readonly size: number;
@@ -62,6 +65,8 @@ export interface SnakeState {
   readonly lastMealTick: number;
   readonly tick: number;
   readonly cause: EndCause | null;
+  /** Bush cells (garden boards only; empty on the plain board). */
+  readonly bushes: readonly Cell[];
 }
 
 export function isMode(v: unknown): v is Mode {
@@ -72,10 +77,19 @@ export function nextMode(m: Mode): Mode {
   return MODES[(MODES.indexOf(m) + 1) % MODES.length] as Mode;
 }
 
-/** Every cell the snake does not cover, in row order. */
-export function freeCells(body: readonly Cell[], size: number): Cell[] {
+/** First-run mode: Easy (walls wrap, slow steps), so a small child is not stopped in seconds. */
+export const DEFAULT_MODE: Mode = 'easy';
+
+/** The mode to start in from a stored value (anything invalid or missing gives DEFAULT_MODE). */
+export function modeFromStored(v: unknown): Mode {
+  return isMode(v) ? v : DEFAULT_MODE;
+}
+
+/** Every cell the snake (and any bush) does not cover, in row order. */
+export function freeCells(body: readonly Cell[], size: number, bushes: readonly Cell[] = []): Cell[] {
   const taken = new Set<number>();
   for (const c of body) taken.add(c.y * size + c.x);
+  for (const c of bushes) taken.add(c.y * size + c.x);
   const out: Cell[] = [];
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
@@ -86,15 +100,53 @@ export function freeCells(body: readonly Cell[], size: number): Cell[] {
 }
 
 /** A random free cell for the food, or null when the snake covers the board. */
-export function placeFood(body: readonly Cell[], size: number, rng: Rng): Cell | null {
-  const free = freeCells(body, size);
+export function placeFood(
+  body: readonly Cell[],
+  size: number,
+  rng: Rng,
+  bushes: readonly Cell[] = [],
+): Cell | null {
+  const free = freeCells(body, size, bushes);
   return free.length === 0 ? null : rng.pick(free);
 }
 
-export function createState(rng: Rng, mode: Mode = 'normal', size = BOARD_SIZE): SnakeState {
+/**
+ * Seeded bushes for a garden board. They keep clear of the edges, of the start row and the rows
+ * next to it, and of each other (no two touch, even at a corner). So no bush is in the first
+ * moves and no corner or pocket can trap the snake.
+ */
+export function placeBushes(rng: Rng, size: number, count = GARDEN_BUSHES): Cell[] {
+  const mid = Math.floor(size / 2);
+  const candidates: Cell[] = [];
+  for (let y = 1; y < size - 1; y++) {
+    if (Math.abs(y - mid) <= 1) continue;
+    for (let x = 1; x < size - 1; x++) candidates.push({ x, y });
+  }
+  const out: Cell[] = [];
+  for (const c of rng.shuffle(candidates)) {
+    if (out.length >= count) break;
+    if (out.some((b) => Math.abs(b.x - c.x) <= 1 && Math.abs(b.y - c.y) <= 1)) continue;
+    out.push(c);
+  }
+  return out;
+}
+
+export interface CreateOptions {
+  /** Garden board: a few seeded soft bushes to steer around. */
+  garden?: boolean;
+}
+
+export function createState(
+  rng: Rng,
+  mode: Mode = 'normal',
+  size = BOARD_SIZE,
+  o: CreateOptions = {},
+): SnakeState {
   const mid = Math.floor(size / 2);
   const body: Cell[] = [];
   for (let i = 0; i < START_LENGTH; i++) body.push({ x: mid - i, y: mid });
+  // Only garden boards draw bushes, so plain rounds use the random stream as before.
+  const bushes = o.garden ? placeBushes(rng, size) : [];
   return {
     size,
     mode,
@@ -102,13 +154,14 @@ export function createState(rng: Rng, mode: Mode = 'normal', size = BOARD_SIZE):
     body,
     dir: 'right',
     queued: [],
-    food: placeFood(body, size, rng),
+    food: placeFood(body, size, rng, bushes),
     score: 0,
     eaten: 0,
     combo: 0,
     lastMealTick: -1,
     tick: 0,
     cause: null,
+    bushes,
   };
 }
 
@@ -178,6 +231,16 @@ export function step(s: SnakeState, rng: Rng): StepResult {
     };
   }
 
+  if (s.bushes.some((c) => sameCell(c, target))) {
+    // A soft bump into a bush: the same gentle stop as a wall.
+    return {
+      state: { ...s, dir, queued: [], phase: 'over', cause: 'bush', tick },
+      ate: null,
+      points: 0,
+      ended: true,
+    };
+  }
+
   const eats = s.food !== null && sameCell(target, s.food);
   // The tail moves away this step unless the snake grows, so its cell is free to enter.
   const blockers = eats ? s.body : s.body.slice(0, -1);
@@ -197,7 +260,7 @@ export function step(s: SnakeState, rng: Rng): StepResult {
 
   const combo = nextCombo(s.combo, s.lastMealTick, tick);
   const points = rules.points * combo;
-  const food = placeFood(body, s.size, rng);
+  const food = placeFood(body, s.size, rng, s.bushes);
   const full = food === null;
   return {
     state: {
@@ -246,9 +309,12 @@ export function runFixedSteps(
   return a;
 }
 
-/** localStorage key (under the kit's g499: prefix) of the best score for a mode. */
-export function bestKey(mode: Mode): string {
-  return `snake:best:${mode}`;
+/**
+ * localStorage key (under the kit's g499: prefix) of the best score for a mode. Garden boards
+ * keep their own best, so the plain board's best stays comparable.
+ */
+export function bestKey(mode: Mode, garden = false): string {
+  return garden ? `snake:best:${mode}:garden` : `snake:best:${mode}`;
 }
 
 /** Read a stored best score safely: a whole number >= 0, anything else is 0. */
@@ -270,8 +336,9 @@ export function replay(
   turns: readonly ScriptedTurn[],
   steps: number,
   size = BOARD_SIZE,
+  o: CreateOptions = {},
 ): SnakeState {
-  let s = start(createState(rng, mode, size));
+  let s = start(createState(rng, mode, size, o));
   for (let i = 0; i < steps && s.phase === 'playing'; i++) {
     for (const t of turns) if (t.at === i) s = queueTurn(s, t.dir);
     s = step(s, rng).state;

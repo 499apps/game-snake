@@ -15,13 +15,46 @@ import {
 } from '@playwright/test';
 import { decodePng, imageStats, type ImageStats } from './png-decode';
 
+interface ClipRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 interface G499TestWindow {
   __g499?: {
     ready?: boolean;
     step?: (frames: number) => void;
     idle?: () => Promise<void>;
     state?: () => unknown;
+    sample?: (excludeClip?: ClipRect | null) => LookSample | null;
+    clipExclude?: () => ClipRect | null;
+    tier?: string;
   };
+}
+
+export interface LookSample {
+  total: number;
+  distinct: number;
+  nonBackground: number;
+  /** Share (0..1) of sampled pixels with min(R, G, B) >= 240. */
+  clipped: number;
+}
+
+/**
+ * Read the canvas back through the page's test API (WebGL read-back, so bloom and tone mapping
+ * are included) and report the clipped-white share. The page may name a rectangle to leave out
+ * (window.__g499.clipExclude, for example white paper). Null without WebGL.
+ */
+export async function sampleLook(page: Page): Promise<LookSample | null> {
+  return page.evaluate(async () => {
+    const api = (window as unknown as G499TestWindow).__g499;
+    if (api?.idle) await api.idle();
+    if (!api?.sample) return null;
+    const exclude = api.clipExclude ? api.clipExclude() : null;
+    return api.sample(exclude);
+  });
 }
 
 export const STAGE_SELECTOR = 'canvas.g499-stage';

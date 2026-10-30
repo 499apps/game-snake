@@ -3,16 +3,17 @@
 **3D Snake** for 499apps Games: guide a friendly, glossy snake to the fruit.
 It plays at `https://499apps.com/games/snake/`.
 
-- Three speeds, picked with an icon in the left menu: turtle (easy), rabbit (normal), lightning (fast).
+- Three speeds: turtle (easy), rabbit (normal), lightning (fast). Change the speed with the big button next to Play, or in the left menu. A first visit starts in Easy.
 - Easy: the edges wrap around (low blue rim). Normal and fast: a wall bump ends the round gently (tall pink rim).
-- Quick meals raise a combo (up to x5). Each mode keeps its own best score.
+- Garden boards (optional, in the left menu): a few soft bushes, placed from the round's seed. A bush bump ends the round gently, like a wall.
+- Quick meals raise a combo (up to x5). Each mode keeps its own best score (garden boards keep their own).
 - At the end of a round, the snake curls up and goes to sleep. Tap to play again.
 
 ## The privacy promise
 
 - The game collects nothing. No accounts, ads, analytics, cookies or trackers.
 - After the page loads, it makes no network calls and links to no other site.
-- The best scores, the mode and the d-pad setting stay on your device, in `localStorage` keys that start with `g499:snake:`.
+- The best scores, the mode, the garden and the d-pad settings stay on your device, in `localStorage` keys that start with `g499:snake:`.
 - "Clear my data" in the left menu (hold the button) removes all `g499:` keys.
 - After the first visit, the game works offline.
 

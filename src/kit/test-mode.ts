@@ -51,7 +51,11 @@ export interface TestApi {
   /** Frames drawn so far (frozen mode draws only on demand). */
   renders: () => number;
   /** Reads canvas pixels back (stalls the GPU, so only on request, never per frame). */
-  sample: () => { total: number; distinct: number; nonBackground: number } | null;
+  sample: (
+    excludeClip?: { x: number; y: number; w: number; h: number } | null,
+  ) => { total: number; distinct: number; nonBackground: number; clipped: number } | null;
+  /** Optional page hint: the 0..1 canvas rectangle to leave out of the clip share (white paper). */
+  clipExclude?: () => { x: number; y: number; w: number; h: number } | null;
   frameTimes: () => number[];
   state?: () => unknown;
   [key: string]: unknown;

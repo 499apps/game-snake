@@ -39,22 +39,23 @@ export const lighting = {
   hemisphereGround: '#4a3a7a',
   hemisphereIntensity: 1.15,
   keyColor: '#fff1dc',
-  keyIntensity: 2.8,
+  keyIntensity: 2.4,
   keyPosition: [6, 10, 6] as const,
   rimColor: '#8ec5ff',
   rimIntensity: 2.2,
   rimPosition: [-8, 6, -6] as const,
   fillColor: '#ffb8d1',
-  fillIntensity: 28,
+  fillIntensity: 14,
   fillPosition: [-3, 3, 5] as const,
-  exposure: 1.05,
-  bloom: { strength: 0.5, radius: 0.55, threshold: 0.82 },
+  // Kept low so lit pastel surfaces do not clip to white on a real GPU (review K1).
+  exposure: 0.95,
+  bloom: { strength: 0.4, radius: 0.45, threshold: 1.0 },
   vignette: 0.32,
 } as const;
 
 /** Layout tokens (px unless noted). */
 export const tokens = {
-  railWidth: 72,
+  railWidth: 80,
   drawerWidth: 272,
   touchTarget: 56,
   radius: 18,

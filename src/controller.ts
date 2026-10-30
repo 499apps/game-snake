@@ -46,13 +46,32 @@ export class GameController {
   private readonly rng: Rng;
   private readonly ev: ControllerEvents;
   private readonly size: number;
+  /** Garden boards: seeded bushes each round (optional, off by default). */
+  private gardenFlag: boolean;
 
-  constructor(rng: Rng, mode: Mode, events: ControllerEvents = {}, size = BOARD_SIZE) {
+  constructor(
+    rng: Rng,
+    mode: Mode,
+    events: ControllerEvents = {},
+    size = BOARD_SIZE,
+    options: { garden?: boolean } = {},
+  ) {
     this.rng = rng;
     this.ev = events;
     this.size = size;
-    this.state = createState(rng, mode, size);
+    this.gardenFlag = options.garden ?? false;
+    this.state = createState(rng, mode, size, { garden: this.gardenFlag });
     this.prevBody = this.state.body;
+  }
+
+  get garden(): boolean {
+    return this.gardenFlag;
+  }
+
+  /** Switch garden boards on or off; starts a fresh round in the ready phase. */
+  setGarden(on: boolean): void {
+    this.gardenFlag = on;
+    this.reset();
   }
 
   get paused(): boolean {
@@ -76,7 +95,7 @@ export class GameController {
 
   /** A fresh round in the ready phase (optionally in another mode). */
   reset(mode: Mode = this.state.mode): void {
-    this.state = createState(this.rng, mode, this.size);
+    this.state = createState(this.rng, mode, this.size, { garden: this.gardenFlag });
     this.prevBody = this.state.body;
     this.acc = 0;
     this.endedFor = 0;

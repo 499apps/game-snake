@@ -22,11 +22,12 @@ import type { Direction } from './kit/input';
 import type { Cell } from './game/grid';
 import { BOARD_BOTTOM, Board, TILE_TOP, makeToys } from './game/board';
 import { FOOD_COLORS, Food, foodKindFor, makeGlowTexture } from './game/food';
-import { boardPoints, frameCamera, pitchFor, type Insets } from './game/framing';
+import { boardPoints, fillFor, frameCamera, pitchFor, type Insets } from './game/framing';
+import { bloomPulse } from './game/glow';
 import { HeadRig } from './game/head';
 import { Spine, TIP_RADIUS, tailRadius } from './game/spine';
 import { SnakeTube } from './game/tube';
-import { MODE_RULES, type Mode, type SnakeState } from './logic';
+import { GARDEN_BUSHES, MODE_RULES, type Mode, type SnakeState } from './logic';
 
 /** Body tube radius at the neck (cells). */
 const RADIUS = 0.3;
@@ -53,6 +54,9 @@ const SNAKE_COLORS = {
   band: '#178a45',
   belly: '#ffd98a',
 } as const;
+
+/** Garden bushes: a calm teal, far from the snake green in hue. */
+const BUSH_COLOR = mixHex(palette.mint, '#0e5c63', 0.55);
 
 export interface SceneOptions {
   reducedMotion: boolean;
@@ -92,6 +96,7 @@ export class SnakeScene {
   private readonly spine: Spine;
   private readonly particles: ParticleSystem;
   private readonly zzz: Array<{ group: THREE.Group; mat: THREE.MeshStandardMaterial }> = [];
+  private readonly bushes: THREE.Group[] = [];
   private readonly baseBloom: number;
 
   // Scratch buffers (no allocation per frame).
@@ -134,6 +139,8 @@ export class SnakeScene {
     });
     lights.key.castShadow = kit.settings.shadows;
     kit.shadowLights.push(lights.key);
+    // The pink fill point light turned the indigo tiles pink-lavender on phones (review S2).
+    lights.fill.intensity = 10;
 
     const room = makeRoom(scene, {
       floorColor: mixHex(palette.plum, palette.night, 0.35),
@@ -207,7 +214,55 @@ export class SnakeScene {
     scene.add(this.particles.mesh);
 
     this.buildZzz(scene);
+    this.buildBushes(scene);
     this.board.setGlow(1);
+  }
+
+  /**
+   * A pool of soft round bushes (garden boards). Teal clumps with a pink flower: a different
+   * hue and shape from the green tube snake, so the two never look alike.
+   */
+  private buildBushes(scene: THREE.Scene): void {
+    const leaf = candyMaterial(BUSH_COLOR, { roughness: 0.62, clearcoat: 0.3 });
+    leaf.envMapIntensity = 0.35;
+    const flower = candyMaterial(palette.bubblegum, { roughness: 0.4 });
+    const big = new THREE.SphereGeometry(0.3, 22, 16);
+    const small = new THREE.SphereGeometry(0.21, 18, 12);
+    const bloom = new THREE.SphereGeometry(0.07, 12, 8);
+    const clumps: Array<[THREE.BufferGeometry, number, number, number]> = [
+      [big, 0, 0.26, 0],
+      [small, -0.2, 0.2, 0.14],
+      [small, 0.2, 0.2, -0.12],
+      [small, 0.12, 0.22, 0.2],
+    ];
+    for (let i = 0; i < GARDEN_BUSHES; i++) {
+      const g = new THREE.Group();
+      for (const [geo, x, y, z] of clumps) {
+        const m = new THREE.Mesh(geo, leaf);
+        m.position.set(x, TILE_TOP + y, z);
+        m.castShadow = true;
+        m.receiveShadow = true;
+        g.add(m);
+      }
+      const f = new THREE.Mesh(bloom, flower);
+      f.position.set(0.06, TILE_TOP + 0.56, 0.08);
+      g.add(f);
+      g.visible = false;
+      scene.add(g);
+      this.bushes.push(g);
+    }
+  }
+
+  private placeBushes(cells: readonly Cell[]): void {
+    this.bushes.forEach((g, i) => {
+      const c = cells[i];
+      g.visible = c !== undefined;
+      if (c) {
+        this.cellToWorld(c, 0, this.v1);
+        g.position.set(this.v1.x, 0, this.v1.z);
+        g.rotation.y = (c.x * 7 + c.y * 3) % 6;
+      }
+    });
   }
 
   private buildZzz(scene: THREE.Scene): void {
@@ -270,6 +325,7 @@ export class SnakeScene {
     }
     this.food.setVisible(s.food !== null);
     for (const z of this.zzz) z.group.visible = false;
+    this.placeBushes(s.bushes);
   }
 
   onEat(cell: Cell, s: SnakeState): void {
@@ -287,6 +343,7 @@ export class SnakeScene {
     if (big && this.motion) {
       this.particles.burst({ position: pos, color: palette.lemon, count: 16, speed: 4.2, life: 0.6, size: 0.05 });
     }
+    this.board.ringAt(pos.x, pos.z);
     this.eatPulse = 1;
     this.gulp = 1;
     this.bulges.push(s.tick);
@@ -299,7 +356,7 @@ export class SnakeScene {
   }
 
   onEnd(s: SnakeState): void {
-    if (s.cause === 'wall' || s.cause === 'self') {
+    if (s.cause === 'wall' || s.cause === 'bush' || s.cause === 'self') {
       this.bumpDir = s.dir;
       this.shake = this.motion;
     }
@@ -336,11 +393,13 @@ export class SnakeScene {
   resize(width: number, height: number, insets: Insets): void {
     const cam = this.kit.camera;
     const b = this.board;
+    const aspect = width / Math.max(1, height);
     frameCamera(cam, width, height, {
       points: boardPoints(b.outerHalf, b.rimTop, BOARD_BOTTOM, 0.75),
       target: new THREE.Vector3(0, 0, 0),
-      pitch: pitchFor(width / Math.max(1, height)),
+      pitch: pitchFor(aspect),
       insets,
+      fill: fillFor(aspect),
     });
     this.basePos.copy(cam.position);
     this.baseQuat.copy(cam.quaternion);
@@ -488,12 +547,13 @@ export class SnakeScene {
     // Food.
     this.food.update(dt, t, this.motion);
 
-    // Board glow: flashes on a meal, dims while asleep or paused.
-    let glow = 1 + 0.7 * this.eatPulse * this.motion;
+    // Board glow: dims while asleep or paused. A meal flashes the rim and a ring at the eaten
+    // cell only, so the snake and the next food stay readable (review S1).
+    let glow = 1;
     if (sleepy) glow = lerp(glow, 0.5, clamp(v.endedFor / 1.2, 0, 1));
     if (v.paused) glow *= 0.75;
-    this.board.setGlow(glow);
-    this.kit.bloomPass.strength = this.baseBloom * (1 + 0.45 * this.eatPulse * this.motion);
+    this.board.setGlow(glow, this.eatPulse, this.motion);
+    this.kit.bloomPass.strength = this.baseBloom * bloomPulse(this.eatPulse, this.motion);
 
     this.updateZzz(t, asleep, v.endedFor);
     this.particles.update(dt);

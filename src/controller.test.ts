@@ -12,6 +12,25 @@ function frames(c: GameController, n: number): void {
 }
 
 describe('GameController', () => {
+  it('switches garden boards on and off with a fresh ready round', () => {
+    let resets = 0;
+    const c = new GameController(createRng(1), 'easy', { onReset: () => resets++ });
+    expect(c.garden).toBe(false);
+    expect(c.state.bushes).toEqual([]);
+    c.primary();
+    c.setGarden(true);
+    expect(resets).toBe(1);
+    expect(c.garden).toBe(true);
+    expect(c.state.phase).toBe('ready');
+    expect(c.state.bushes.length).toBeGreaterThan(0);
+    c.reset();
+    expect(c.state.bushes.length).toBeGreaterThan(0);
+    c.setGarden(false);
+    expect(c.state.bushes).toEqual([]);
+    const g = new GameController(createRng(1), 'easy', {}, undefined, { garden: true });
+    expect(g.state.bushes.length).toBeGreaterThan(0);
+  });
+
   it('waits in the ready phase until started', () => {
     const c = new GameController(createRng(1), 'normal');
     frames(c, 120);

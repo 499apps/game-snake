@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import {
+  DEFAULT_MONITOR_WINDOW,
   FrameMonitor,
   TIERS,
   TIER_ORDER,
@@ -140,6 +141,16 @@ describe('FrameMonitor', () => {
     }
     return suggestion;
   };
+
+  it('uses a 30-frame window by default, so slow devices drop within about a second', () => {
+    expect(DEFAULT_MONITOR_WINDOW).toBe(30);
+    const m = new FrameMonitor();
+    // 29 slow frames at 30 fps: no window yet.
+    expect(feed(m, 33.3, DEFAULT_MONITOR_WINDOW - 1, 'high')).toBeNull();
+    // The 30th frame closes the window (about 1 s at 30 fps) and drops the tier.
+    expect(m.push(33.3, 'high')).toBe('medium');
+    expect(m.windows).toBe(1);
+  });
 
   it('lowers the tier when frames are slow', () => {
     const m = new FrameMonitor({ window: 10 });

@@ -8,9 +8,11 @@ import { mixHex, palette } from '../kit/theme';
 
 export type FoodKind = 'apple' | 'gem' | 'berry';
 export const FOOD_KINDS: readonly FoodKind[] = ['apple', 'gem', 'berry'];
+/** A deeper blue than palette.sky: the pastel gem read as a white blob under bloom (review S3). */
+export const GEM_COLOR = '#3d8bfd';
 export const FOOD_COLORS: Readonly<Record<FoodKind, string>> = {
   apple: palette.coral,
-  gem: palette.sky,
+  gem: GEM_COLOR,
   berry: palette.lavender,
 };
 
@@ -65,15 +67,15 @@ function apple(): THREE.Group {
 function gem(): THREE.Group {
   const g = new THREE.Group();
   const mat = new THREE.MeshPhysicalMaterial({
-    color: palette.sky,
-    emissive: new THREE.Color(palette.sky),
-    emissiveIntensity: 0.55,
+    color: GEM_COLOR,
+    emissive: new THREE.Color(GEM_COLOR),
+    emissiveIntensity: 0.2,
     roughness: 0.08,
     metalness: 0.05,
     clearcoat: 1,
     clearcoatRoughness: 0.04,
     flatShading: true,
-    envMapIntensity: 1.2,
+    envMapIntensity: 0.6,
   });
   const stone = new THREE.Mesh(new THREE.OctahedronGeometry(0.3, 0), mat);
   stone.scale.set(1, 1.3, 1);

@@ -14,7 +14,7 @@
   --g499-bubblegum: #f783ac;
   --g499-cream: #fff7e6;
   --g499-white: #ffffff;
-  --g499-rail-width: 72px;
+  --g499-rail-width: 80px;
   --g499-drawer-width: 272px;
   --g499-touch: 56px;
   --g499-radius: 18px;
@@ -164,11 +164,15 @@ body.g499-kind-hub {
   text-transform: uppercase;
   color: rgba(255, 247, 230, 0.7);
   text-align: center;
-  line-height: 1.2;
+  line-height: 1.05;
   max-width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .g499-rail-close {
@@ -218,12 +222,17 @@ body.g499-kind-hub {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Labels wrap to at most 2 lines instead of an ellipsis ("Clear m..." hid a destructive action). */
 .g499-menu-item .g499-label {
-  display: block;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   max-width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.05;
+  overflow-wrap: break-word;
 }
 
 .g499-menu-item:hover {
@@ -300,8 +309,9 @@ body.g499-kind-hub {
 .g499-drawer-toggle {
   display: none;
   position: fixed;
+  /* Top-left on every page (hub, privacy, games), so phones keep the full width below it. */
   left: calc(6px + var(--g499-safe-left));
-  top: calc(50% - var(--g499-touch) / 2);
+  top: calc(10px + var(--g499-safe-top));
   width: var(--g499-touch);
   height: var(--g499-touch);
   border: 0;
@@ -366,10 +376,11 @@ body.g499-kind-hub {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 44px;
-    height: 44px;
+    flex: 0 0 auto;
+    width: var(--g499-touch);
+    height: var(--g499-touch);
     border: 0;
-    border-radius: 12px;
+    border-radius: 14px;
     background: rgba(255, 255, 255, 0.06);
     color: var(--g499-cream);
     cursor: pointer;

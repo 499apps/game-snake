@@ -6,6 +6,8 @@ export * from './audio';
 export * from './input';
 export * from './quality';
 export * from './renderer';
+export * from './pixels';
+export * from './tone-mapping';
 export * from './loop';
 export * from './scene-helpers';
 export * from './particles';

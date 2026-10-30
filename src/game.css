@@ -103,24 +103,52 @@
   margin-left: 6px;
 }
 
-.snake-mode-badge {
+/* Speed button beside Play: a 56px target that cycles Easy, Normal, Fast (review S5). */
+.snake-mode-btn {
   position: absolute;
-  right: -8px;
-  bottom: -6px;
+  left: calc(var(--snake-start-x, 50%) + 58px);
+  top: var(--snake-start-y, 70%);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
+  gap: 1px;
+  width: var(--g499-touch);
+  height: var(--g499-touch);
+  margin-top: calc(var(--g499-touch) / -2);
+  padding: 0;
+  border: 0;
+  border-radius: 18px;
   background: var(--g499-ink);
   color: var(--g499-lemon);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.snake-mode-badge svg {
-  width: 26px;
-  height: 26px;
+.snake-mode-btn:active {
+  transform: scale(0.94);
+}
+
+.snake-mode-btn:focus-visible {
+  outline: 3px solid var(--g499-lemon);
+  outline-offset: 3px;
+}
+
+.snake-mode-icon {
+  display: flex;
+}
+
+.snake-mode-icon svg {
+  width: 28px;
+  height: 28px;
 }
 
 @keyframes snake-breathe {

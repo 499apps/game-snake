@@ -77,7 +77,8 @@ export function candyMaterial(
     metalness: 0,
     clearcoat: o.clearcoat ?? 1,
     clearcoatRoughness: o.clearcoatRoughness ?? 0.08,
-    sheen: o.sheen ?? 0.25,
+    // Sheen adds a white rim and costs GPU time; opt in per material.
+    sheen: o.sheen ?? 0,
     sheenColor: new THREE.Color(palette.white),
     envMapIntensity: 0.9,
   });

@@ -19,6 +19,7 @@ import {
   medianOf,
   readState,
   reloadOffline,
+  sampleLook,
   serviceWorkerInfo,
   stepFrames,
   swipe,
@@ -55,7 +56,18 @@ export interface SmokeTarget {
   clearSelector?: string;
   /** Extra paths to open offline after the first visit (single-worker site check). */
   offlineAlso?: string[];
+  /**
+   * Look gate: the largest share (0..1) of clipped-white canvas pixels allowed at tier=high.
+   * Default DEFAULT_CLIP_BUDGET. The page may leave a rectangle out via window.__g499.clipExclude.
+   */
+  clipBudget?: number;
 }
+
+/** Default look-gate budget: at most 3% of the canvas may clip to white at tier=high. */
+export const DEFAULT_CLIP_BUDGET = 0.03;
+
+/** Frozen, full-quality frame for the look gate (bloom, shadows, pixel ratio 2). */
+const LOOK_QUERY = '?test=1&tier=high';
 
 interface OpenResult {
   guard: PageGuard;
@@ -185,6 +197,56 @@ export function defineSmokeSuite(targets: SmokeTarget[]): void {
       });
 
       if (target.webgl) {
+        const budget = target.clipBudget ?? DEFAULT_CLIP_BUDGET;
+
+        // CI baselines run at tier=low on software GL, so bloom never shows there. This gate
+        // forces tier=high (bloom on) and checks that lit surfaces do not wash out to white.
+        // Software GL draws the frozen frame the same way on every run, so the share is stable.
+        test('look gate: no blown-out white at tier=high', async ({ page, baseURL }, testInfo) => {
+          test.skip(!isDesktopChromium(testInfo), 'look gate runs in desktop Chromium only');
+          const { guard } = await open(page, baseURL, target, LOOK_QUERY);
+          test.skip(!(await hasWebgl(page)), 'no WebGL in this engine on this host');
+          await stepFrames(page, 2);
+          const look = await sampleLook(page);
+          expect(look, 'pixel sample from the test API').not.toBeNull();
+          const clipped = look?.clipped ?? 1;
+          testInfo.annotations.push({
+            type: 'look',
+            description: `clipped ${(clipped * 100).toFixed(2)}% (budget ${(budget * 100).toFixed(1)}%, software GL: ${await isSoftwareGl(page)})`,
+          });
+          expect(clipped, 'share of clipped-white pixels at tier=high').toBeLessThan(budget);
+          await guard.assertClean();
+        });
+
+        // The same gate on the host GPU, where the review saw the wash-out. Its title holds
+        // "frame-time budget" so run-e2e.mjs runs it in the quiet single-worker pass.
+        test('look gate on the host GPU (frame-time budget pass)', async ({ baseURL }, testInfo) => {
+          test.skip(!isDesktopChromium(testInfo), 'look gate runs in desktop Chromium only');
+          const browser = await chromium.launch({ args: hardwareGlArgs() });
+          try {
+            const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, baseURL });
+            const { guard } = await open(page, baseURL, target, LOOK_QUERY);
+            test.skip(
+              (await isSoftwareGl(page)) || !(await hasWebgl(page)),
+              'no hardware GPU on this host; the software-GL look gate covers this page',
+            );
+            await stepFrames(page, 2);
+            const look = await sampleLook(page);
+            expect(look, 'pixel sample from the test API').not.toBeNull();
+            const clipped = look?.clipped ?? 1;
+            testInfo.annotations.push({
+              type: 'look',
+              description: `host GPU: clipped ${(clipped * 100).toFixed(2)}% (budget ${(budget * 100).toFixed(1)}%)`,
+            });
+            expect(clipped, 'share of clipped-white pixels at tier=high (host GPU)').toBeLessThan(
+              budget,
+            );
+            await guard.assertClean();
+          } finally {
+            await browser.close();
+          }
+        });
+
         test('holds the frame-time budget', async ({ baseURL }, testInfo) => {
           test.skip(
             !isDesktopChromium(testInfo),

@@ -6,6 +6,8 @@ import { inBounds, sameCell, type Cell } from './game/grid';
 import {
   BOARD_SIZE,
   COMBO_WINDOW,
+  DEFAULT_MODE,
+  GARDEN_BUSHES,
   MAX_COMBO,
   MAX_QUEUED_TURNS,
   MODES,
@@ -15,9 +17,11 @@ import {
   createState,
   freeCells,
   isMode,
+  modeFromStored,
   nextCombo,
   nextHead,
   nextMode,
+  placeBushes,
   placeFood,
   queueTurn,
   replay,
@@ -92,6 +96,13 @@ describe('modes', () => {
   it('recognises modes', () => {
     for (const m of MODES) expect(isMode(m)).toBe(true);
     for (const v of ['', 'hard', 1, null, undefined]) expect(isMode(v)).toBe(false);
+  });
+
+  it('starts a first run in Easy (walls wrap), and keeps a stored choice', () => {
+    expect(DEFAULT_MODE).toBe('easy');
+    expect(MODE_RULES[DEFAULT_MODE].wrap).toBe(true);
+    for (const v of [null, undefined, '', 'hard', 3, {}]) expect(modeFromStored(v)).toBe('easy');
+    for (const m of MODES) expect(modeFromStored(m)).toBe(m);
   });
 
   it('easy is slower than normal, fast is quicker', () => {
@@ -372,6 +383,86 @@ describe('invariants (property)', () => {
   });
 });
 
+describe('garden boards', () => {
+  const touches = (a: Cell, b: Cell) => Math.abs(a.x - b.x) <= 1 && Math.abs(a.y - b.y) <= 1;
+
+  it('places seeded bushes away from the edges, the start rows and each other (property)', () => {
+    fc.assert(
+      fc.property(fc.integer(), (seed) => {
+        const s = createState(createRng(seed), 'easy', BOARD_SIZE, { garden: true });
+        const mid = Math.floor(BOARD_SIZE / 2);
+        expect(s.bushes).toHaveLength(GARDEN_BUSHES);
+        for (const b of s.bushes) {
+          expect(b.x).toBeGreaterThan(0);
+          expect(b.y).toBeGreaterThan(0);
+          expect(b.x).toBeLessThan(BOARD_SIZE - 1);
+          expect(b.y).toBeLessThan(BOARD_SIZE - 1);
+          expect(Math.abs(b.y - mid)).toBeGreaterThan(1);
+          expect(s.body.some((c) => sameCell(c, b))).toBe(false);
+          const food = s.food;
+          if (food) expect(sameCell(food, b)).toBe(false);
+        }
+        for (let i = 0; i < s.bushes.length; i++) {
+          for (let j = i + 1; j < s.bushes.length; j++) {
+            expect(touches(s.bushes[i] as Cell, s.bushes[j] as Cell)).toBe(false);
+          }
+        }
+        // Same seed, same garden.
+        const again = createState(createRng(seed), 'easy', BOARD_SIZE, { garden: true });
+        expect(again.bushes).toEqual(s.bushes);
+      }),
+    );
+  });
+
+  it('plain boards have no bushes and draw the same food as before', () => {
+    const plain = createState(createRng(7), 'normal');
+    expect(plain.bushes).toEqual([]);
+    expect(placeBushes(createRng(7), BOARD_SIZE, 0)).toEqual([]);
+  });
+
+  it('a bush is a gentle stop, like a wall', () => {
+    const bush = { x: Math.floor(BOARD_SIZE / 2) + 1, y: Math.floor(BOARD_SIZE / 2) };
+    const s = playing({ bushes: [bush], food: { x: 0, y: 0 } }, 'easy');
+    const r = step(s, createRng(1));
+    expect(r.ended).toBe(true);
+    expect(r.state.phase).toBe('over');
+    expect(r.state.cause).toBe('bush');
+    expect(r.state.body).toEqual(s.body);
+  });
+
+  it('never places food on a bush, and the snake never enters one (property)', () => {
+    fc.assert(
+      fc.property(modeArb, fc.integer(), fc.array(opArb, { maxLength: 300 }), (mode, seed, ops) => {
+        const rng = createRng(seed);
+        let s = start(createState(rng, mode, BOARD_SIZE, { garden: true }));
+        for (const op of ops) {
+          if (op.kind === 'turn') {
+            s = queueTurn(s, op.dir);
+            continue;
+          }
+          s = step(s, rng).state;
+          const food = s.food;
+          for (const b of s.bushes) {
+            if (food) expect(sameCell(food, b)).toBe(false);
+            expect(s.body.some((c) => sameCell(c, b))).toBe(false);
+          }
+          if (s.phase === 'over') break;
+        }
+      }),
+    );
+  });
+
+  it('replays a garden round identically from a seed and a script', () => {
+    const turns = [
+      { at: 1, dir: 'up' as const },
+      { at: 3, dir: 'right' as const },
+    ];
+    const a = replay(createRng(42), 'easy', turns, 30, BOARD_SIZE, { garden: true });
+    const b = replay(createRng(42), 'easy', turns, 30, BOARD_SIZE, { garden: true });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
 describe('deterministic replay', () => {
   const turnArb = fc.record({ at: fc.nat(120), dir: dirArb });
 
@@ -448,8 +539,14 @@ describe('runFixedSteps', () => {
 
 describe('best scores', () => {
   it('uses one key per mode', () => {
-    expect(new Set(MODES.map(bestKey)).size).toBe(MODES.length);
+    expect(new Set(MODES.map((m) => bestKey(m))).size).toBe(MODES.length);
     expect(bestKey('fast')).toBe('snake:best:fast');
+  });
+
+  it('keeps a separate best for garden boards', () => {
+    const keys = [...MODES.map((m) => bestKey(m)), ...MODES.map((m) => bestKey(m, true))];
+    expect(new Set(keys).size).toBe(MODES.length * 2);
+    expect(bestKey('easy', true)).toBe('snake:best:easy:garden');
   });
 
   it('reads stored values safely', () => {

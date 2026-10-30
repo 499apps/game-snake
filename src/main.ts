@@ -13,16 +13,26 @@ import { createShell } from './kit/shell';
 import { createStage } from './kit/stage';
 import { storage } from './kit/storage';
 import { readTestMode } from './kit/test-mode';
-import { GameController } from './controller';
-import type { Insets } from './game/framing';
+import { GameController, type ControllerEvents } from './controller';
+import { layoutInsets, type Insets } from './game/framing';
+import { SNAKE_BLOOM_THRESHOLD } from './game/glow';
 import type { Cell } from './game/grid';
 import { MODE_ICON, MODE_LABEL, snakeIcon } from './icons';
-import { BOARD_SIZE, bestKey, isMode, nextMode, sanitizeBest, type Mode, type SnakeState } from './logic';
+import {
+  BOARD_SIZE,
+  bestKey,
+  modeFromStored,
+  nextMode,
+  sanitizeBest,
+  type Mode,
+  type SnakeState,
+} from './logic';
 import { SnakeScene } from './scene';
 import { SnakeSounds } from './sound';
 
 const MODE_KEY = 'snake:mode';
 const DPAD_KEY = 'snake:dpad';
+const GARDEN_KEY = 'snake:garden';
 /** Seconds after the end before the game-over card slides in (the snake curls up first). */
 const OVER_CARD_DELAY = 1.3;
 const MAX_POPS = 6;
@@ -41,7 +51,9 @@ const scoreEl = must<HTMLElement>('#score');
 const bestEl = must<HTMLElement>('#best');
 const startEl = must<HTMLElement>('#start');
 const startBtn = must<HTMLButtonElement>('#start-btn');
-const startModeEl = must<HTMLElement>('#start-mode');
+const startModeBtn = must<HTMLButtonElement>('#start-mode');
+const startModeIcon = must<HTMLElement>('#start-mode-icon');
+const startModeLabel = must<HTMLElement>('#start-mode-label');
 const pauseOverlay = must<HTMLElement>('#pause');
 const resumeButton = must<HTMLButtonElement>('#resume');
 const overOverlay = must<HTMLElement>('#over');
@@ -61,12 +73,15 @@ const testMode = readTestMode();
 const seed = testMode.enabled ? testMode.seed : Math.floor(Math.random() * 0xffffffff);
 
 function storedMode(): Mode {
-  const m = storage.get<unknown>(MODE_KEY, 'normal');
-  return isMode(m) ? m : 'normal';
+  // Key "snake:mode" is stored as "g499:snake:mode" by the kit storage.
+  return modeFromStored(storage.get<unknown>(MODE_KEY, null));
 }
 
+/** Garden boards (seeded soft bushes) are optional and off until the player turns them on. */
+let gardenOn = storage.get<unknown>(GARDEN_KEY, false) === true;
+
 function bestFor(mode: Mode): number {
-  return sanitizeBest(storage.get<unknown>(bestKey(mode), 0));
+  return sanitizeBest(storage.get<unknown>(bestKey(mode, gardenOn), 0));
 }
 
 let scene: SnakeScene | null = null;
@@ -83,7 +98,7 @@ let dpadOn = (() => {
   }
 })();
 
-const game = new GameController(createRng(seed ^ 0x5eed5), storedMode(), {
+const events: ControllerEvents = {
   onReset: (s) => {
     scene?.reset(s);
     bestAtStart = bestFor(s.mode);
@@ -100,7 +115,7 @@ const game = new GameController(createRng(seed ^ 0x5eed5), storedMode(), {
     scene?.onEat(cell, s);
     sounds.eat(s.combo);
     showPop(cell, points, s.combo);
-    if (s.score > bestFor(s.mode)) shell.storage.set(bestKey(s.mode), s.score);
+    if (s.score > bestFor(s.mode)) shell.storage.set(bestKey(s.mode, gardenOn), s.score);
     renderHud();
   },
   onEnd: (s) => {
@@ -110,7 +125,7 @@ const game = new GameController(createRng(seed ^ 0x5eed5), storedMode(), {
       sounds.bump();
       sounds.sleep();
     }
-    if (s.score > bestFor(s.mode)) shell.storage.set(bestKey(s.mode), s.score);
+    if (s.score > bestFor(s.mode)) shell.storage.set(bestKey(s.mode, gardenOn), s.score);
     renderHud();
     updateUi();
   },
@@ -120,6 +135,10 @@ const game = new GameController(createRng(seed ^ 0x5eed5), storedMode(), {
     updateUi();
   },
   onTurn: () => sounds.turn(),
+};
+
+const game = new GameController(createRng(seed ^ 0x5eed5), storedMode(), events, BOARD_SIZE, {
+  garden: gardenOn,
 });
 
 const shell = createShell({
@@ -160,11 +179,18 @@ const shell = createShell({
     {
       kind: 'toggle',
       id: 'dpad',
-      label: 'D-pad on',
-      labelOff: 'D-pad off',
+      // Short label (fits the rail); the toggle state shows in colour and aria-pressed.
+      label: 'D-pad',
       icon: 'games',
       get: () => dpadOn,
       set: (on) => setDpad(on),
+    },
+    {
+      kind: 'button',
+      id: 'garden',
+      label: 'Garden',
+      icon: 'games',
+      onSelect: () => setGarden(!gardenOn),
     },
   ],
   onClearData: () => {
@@ -183,7 +209,7 @@ const stage = createStage({
   fallback: { title: 'Snake', text: 'This game needs WebGL, which this browser does not offer.' },
   renderer: {
     exposure: 0.95,
-    bloom: { strength: 0.6, radius: 0.5, threshold: 1.05 },
+    bloom: { strength: 0.5, radius: 0.5, threshold: SNAKE_BLOOM_THRESHOLD },
     vignette: 0.3,
   },
 });
@@ -205,7 +231,21 @@ function renderModeItem(): void {
     if (label) label.textContent = MODE_LABEL[game.mode];
     btn.setAttribute('aria-label', `Speed: ${MODE_LABEL[game.mode]}`);
   }
-  startModeEl.innerHTML = snakeIcon(MODE_ICON[game.mode]);
+  startModeIcon.innerHTML = snakeIcon(MODE_ICON[game.mode]);
+  startModeLabel.textContent = MODE_LABEL[game.mode];
+  startModeBtn.setAttribute('aria-label', `Speed: ${MODE_LABEL[game.mode]} (tap to change)`);
+  startModeBtn.dataset['mode'] = game.mode;
+}
+
+function renderGardenItem(): void {
+  const btn = shell.menu.rail.querySelector<HTMLElement>('[data-menu-id="garden"]');
+  if (!btn) return;
+  btn.classList.add('g499-menu-toggle');
+  btn.classList.toggle('is-on', gardenOn);
+  btn.setAttribute('aria-pressed', gardenOn ? 'true' : 'false');
+  btn.setAttribute('aria-label', 'Garden board with bushes');
+  const icon = btn.querySelector('.g499-icon');
+  if (icon) icon.innerHTML = snakeIcon('bush');
 }
 
 function updateUi(): void {
@@ -262,26 +302,22 @@ function px(v: string): number {
 function measureInsets(): Insets {
   const host = stageHost.getBoundingClientRect();
   const probe = getComputedStyle(safeProbe);
-  const safeBottom = px(probe.paddingBottom);
-  const safeRight = px(probe.paddingRight);
-  const hud = hudEl.getBoundingClientRect();
-  const insets: Insets = {
-    top: Math.max(12, hud.bottom - host.top + 6),
-    right: 12 + safeRight,
-    bottom: 12 + safeBottom,
-    left: 12,
-  };
+  const rel = (r: DOMRect) => ({
+    left: r.left - host.left,
+    top: r.top - host.top,
+    right: r.right - host.left,
+    bottom: r.bottom - host.top,
+  });
   const toggle = shell.menu.toggleButton;
-  if (getComputedStyle(toggle).display !== 'none') {
-    const t = toggle.getBoundingClientRect();
-    insets.left = Math.max(insets.left, t.right - host.left + 4);
-  }
-  if (!dpadEl.hidden) {
-    const r = dpadEl.getBoundingClientRect();
-    if (host.height >= host.width) insets.bottom = Math.max(insets.bottom, host.bottom - r.top + 8);
-    else insets.right = Math.max(insets.right, host.right - r.left + 8);
-  }
-  return insets;
+  return layoutInsets({
+    width: host.width,
+    height: host.height,
+    hudBottom: hudEl.getBoundingClientRect().bottom - host.top,
+    toggle: getComputedStyle(toggle).display !== 'none' ? rel(toggle.getBoundingClientRect()) : null,
+    dpad: dpadEl.hidden ? null : rel(dpadEl.getBoundingClientRect()),
+    safeRight: px(probe.paddingRight),
+    safeBottom: px(probe.paddingBottom),
+  });
 }
 
 /** Put the start button over the board, a little in front of the snake. */
@@ -290,8 +326,9 @@ function placeStart(): void {
   const host = stageHost.getBoundingClientRect();
   const app = appEl.getBoundingClientRect();
   const p = scene.cellToScreen({ x: Math.floor(BOARD_SIZE / 2), y: BOARD_SIZE - 3 });
-  startBtn.style.setProperty('--snake-start-x', `${p.x + host.left - app.left}px`);
-  startBtn.style.setProperty('--snake-start-y', `${p.y + host.top - app.top}px`);
+  // Set on the container: the Play button and the speed button both use it.
+  startEl.style.setProperty('--snake-start-x', `${p.x + host.left - app.left}px`);
+  startEl.style.setProperty('--snake-start-y', `${p.y + host.top - app.top}px`);
 }
 
 function relayout(): void {
@@ -313,6 +350,15 @@ function setMode(mode: Mode): void {
   shell.storage.set(MODE_KEY, mode);
   game.reset(mode);
   renderModeItem();
+  shell.menu.close();
+}
+
+/** Garden boards on or off: a fresh round with (or without) seeded bushes. */
+function setGarden(on: boolean): void {
+  gardenOn = on;
+  shell.storage.set(GARDEN_KEY, on);
+  game.setGarden(on);
+  renderGardenItem();
   shell.menu.close();
 }
 
@@ -414,6 +460,12 @@ startBtn.addEventListener('click', () => {
   actions++;
   primary();
 });
+// Start screen: one big button cycles the speed (Easy, Normal, Fast), no drawer needed.
+startModeBtn.addEventListener('click', () => {
+  actions++;
+  shell.synth.tick();
+  setMode(nextMode(game.mode));
+});
 resumeButton.addEventListener('click', () => setPaused(false));
 pauseOverlay.addEventListener('click', (e) => {
   if (e.target === pauseOverlay) setPaused(false);
@@ -438,6 +490,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 renderModeItem();
+renderGardenItem();
 renderHud();
 updateUi();
 relayout();
@@ -458,6 +511,8 @@ stage.ready(() => {
     tick: s.tick,
     paused: game.paused,
     cause: s.cause,
+    garden: gardenOn,
+    bushes: s.bushes.length,
     best: bestFor(s.mode),
     stepFrames: Math.floor(game.interval * 60),
   };

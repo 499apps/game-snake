@@ -12,6 +12,8 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { TIERS, type QualitySettings, type Tier } from './quality';
 import { lighting, palette } from './theme';
 import { disposeObject } from './scene-helpers';
+import { analysePixels, type PixelSample, type SampleRect } from './pixels';
+import { resolveToneMapping } from './tone-mapping';
 
 const VignetteShader = {
   uniforms: {
@@ -51,14 +53,10 @@ export interface KitRendererOptions {
   bloom?: { strength: number; radius: number; threshold: number };
   vignette?: number;
   fov?: number;
+  /** Tone mapping for the output pass. Default ACES Filmic; Coloring uses Neutral for true paint colours. */
+  toneMapping?: THREE.ToneMapping;
   /** Result of an earlier probeGpu(); skips a second WebGL probe context. */
   available?: boolean;
-}
-
-export interface PixelSample {
-  total: number;
-  distinct: number;
-  nonBackground: number;
 }
 
 export interface KitRenderer {
@@ -81,7 +79,7 @@ export interface KitRenderer {
   /** Used by createLoop to receive requestRender() calls. */
   setRenderScheduler(fn: (() => void) | null): void;
   /** Reads pixels back. Only call it from tests: it stalls the GPU. */
-  sampleCanvasPixels(step?: number): PixelSample;
+  sampleCanvasPixels(step?: number, excludeClip?: SampleRect | null): PixelSample;
   dispose(): void;
 }
 
@@ -153,7 +151,7 @@ export function createKitRenderer(o: KitRendererOptions): KitRenderer | null {
   const clear = new THREE.Color(o.clearColor ?? palette.night);
   renderer.setClearColor(clear, 1);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMapping = resolveToneMapping(o);
   renderer.toneMappingExposure = o.exposure ?? lighting.exposure;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -263,30 +261,15 @@ export function createKitRenderer(o: KitRendererOptions): KitRenderer | null {
       scheduler = fn;
     },
     // Never called per frame: only window.__g499.sample() in tests reads pixels back.
-    sampleCanvasPixels(step = 8) {
+    sampleCanvasPixels(step = 8, excludeClip: SampleRect | null = null) {
       composer.render();
       const gl = renderer.getContext();
       const w = gl.drawingBufferWidth;
       const h = gl.drawingBufferHeight;
       const buf = new Uint8Array(w * h * 4);
       gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-      const counts = new Map<number, number>();
-      let total = 0;
-      const s = Math.max(1, Math.floor(step));
-      for (let y = 0; y < h; y += s) {
-        for (let x = 0; x < w; x += s) {
-          const i = (y * w + x) * 4;
-          const q =
-            (((buf[i] as number) >> 3) << 10) |
-            (((buf[i + 1] as number) >> 3) << 5) |
-            ((buf[i + 2] as number) >> 3);
-          counts.set(q, (counts.get(q) ?? 0) + 1);
-          total++;
-        }
-      }
-      let mode = 0;
-      for (const c of counts.values()) if (c > mode) mode = c;
-      return { total, distinct: counts.size, nonBackground: total - mode };
+      // readPixels rows start at the bottom; excludeClip uses top-left coordinates.
+      return analysePixels(buf, w, h, { step, excludeClip, flipY: true });
     },
     dispose() {
       scheduler = null;

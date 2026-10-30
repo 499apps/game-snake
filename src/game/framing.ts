@@ -134,6 +134,57 @@ export function boardPoints(half: number, top: number, bottom: number, headroom:
   return out;
 }
 
+/** Share of the free rectangle the board may fill: more in portrait, where width is scarce. */
+export function fillFor(aspect: number): number {
+  return aspect < 1 ? 0.97 : 0.94;
+}
+
+/** A box in CSS px relative to the stage host (top-left origin). */
+export interface HostBox {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+export interface LayoutInsetInput {
+  width: number;
+  height: number;
+  /** Bottom edge of the score HUD. */
+  hudBottom: number;
+  /** The phone drawer button, or null when the left rail shows instead. */
+  toggle: HostBox | null;
+  /** The on-screen d-pad, or null when it is hidden. */
+  dpad: HostBox | null;
+  safeRight: number;
+  safeBottom: number;
+}
+
+/**
+ * Overlay insets for the board. The drawer button sits top-left. In portrait it shares the
+ * HUD row, so it only pushes the top edge down and the sides keep a thin margin: the board then
+ * fills 90% or more of a phone's width (review S4). In landscape it pushes the left edge.
+ */
+export function layoutInsets(i: LayoutInsetInput): Insets {
+  const portrait = i.height >= i.width;
+  const side = portrait ? 4 : 12;
+  const insets: Insets = {
+    top: Math.max(12, i.hudBottom + 6),
+    right: side + i.safeRight,
+    bottom: 12 + i.safeBottom,
+    left: side,
+  };
+  if (i.toggle) {
+    if (portrait) insets.top = Math.max(insets.top, i.toggle.bottom + 4);
+    else insets.left = Math.max(insets.left, i.toggle.right + 4);
+  }
+  if (i.dpad) {
+    if (portrait) insets.bottom = Math.max(insets.bottom, i.height - i.dpad.top + 8);
+    else insets.right = Math.max(insets.right, i.width - i.dpad.left + 8);
+  }
+  return insets;
+}
+
 /** Steeper in portrait (the board fills the narrow width), a little lower in landscape. */
 export function pitchFor(aspect: number): number {
   const t = THREE.MathUtils.clamp((aspect - 0.6) / (1.5 - 0.6), 0, 1);

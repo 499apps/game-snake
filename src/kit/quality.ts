@@ -128,6 +128,12 @@ export function median(values: readonly number[]): number {
   return ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
 }
 
+/**
+ * Default frames per monitor window. 30 frames is 0.5 s at 60 fps and 1 s at 30 fps, so a slow
+ * device drops a tier within about a second (it was 60, which took 2 s at 30 fps).
+ */
+export const DEFAULT_MONITOR_WINDOW = 30;
+
 export interface FrameMonitorOptions {
   /** Frames per evaluation window. */
   window?: number;
@@ -160,7 +166,7 @@ export class FrameMonitor {
   private windowsSeen = 0;
 
   constructor(opts: FrameMonitorOptions = {}) {
-    this.size = Math.max(4, opts.window ?? 60);
+    this.size = Math.max(4, opts.window ?? DEFAULT_MONITOR_WINDOW);
     this.lowerAbove = opts.lowerAbove ?? 20;
     this.raiseBelow = opts.raiseBelow ?? 12;
     this.cooldownWindows = opts.cooldownWindows ?? 2;

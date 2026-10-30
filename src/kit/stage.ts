@@ -204,7 +204,8 @@ export function createStage(o: StageOptions): Stage {
         },
         idle: () => (loop ? loop.idle() : Promise.resolve()),
         renders: () => (loop ? loop.renders : 0),
-        sample: () => (kit ? kit.sampleCanvasPixels() : null),
+        sample: (excludeClip?: { x: number; y: number; w: number; h: number } | null) =>
+          kit ? kit.sampleCanvasPixels(8, excludeClip ?? null) : null,
         frameTimes: () => (loop ? loop.frameTimes.slice() : []),
         state,
         ...(extra ?? {}),

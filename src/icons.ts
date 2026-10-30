@@ -16,6 +16,7 @@ const paths = {
   play: '<path d="M7 5v14l11-7z"/>',
   pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
   again: '<path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4v5h5"/>',
+  bush: '<path d="M3.5 19h17"/><path d="M6.5 19a3.5 3.5 0 0 1 .3-7 5 5 0 0 1 9.4-1.2A3.8 3.8 0 0 1 17.5 19"/><path d="M12 19v-4"/>',
 } as const;
 
 export type SnakeIcon = keyof typeof paths;

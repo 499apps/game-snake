@@ -57,8 +57,8 @@ export function createShell(o: ShellOptions): Shell {
   items.push({
     kind: 'toggle',
     id: 'mute',
-    label: 'Sound on',
-    labelOff: 'Sound off',
+    // Short labels fit the 80 px rail on two lines; the icon and aria-pressed show the state.
+    label: 'Sound',
     icon: 'sound',
     iconOff: 'soundOff',
     get: () => !synth.muted,
@@ -67,8 +67,7 @@ export function createShell(o: ShellOptions): Shell {
   items.push({
     kind: 'toggle',
     id: 'fullscreen',
-    label: 'Exit fullscreen',
-    labelOff: 'Fullscreen',
+    label: 'Full screen',
     icon: 'fullscreenExit',
     iconOff: 'fullscreen',
     get: () => isFullscreen(),
@@ -80,7 +79,7 @@ export function createShell(o: ShellOptions): Shell {
   items.push({
     kind: 'hold',
     id: 'clear',
-    label: 'Clear my data',
+    label: 'Clear data',
     icon: 'broom',
     holdMs: 1200,
     doneLabel: 'Cleared',

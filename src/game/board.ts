@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { candyMaterial, roundedBox } from '../kit/scene-helpers';
 import { mixHex, palette } from '../kit/theme';
+import { gridLevel, gridOpacity, rimLevel, ringLook } from './glow';
 
 /** Height of the tile tops (the surface the snake rests on). */
 export const TILE_TOP = 0.1;
@@ -26,6 +27,8 @@ export class Board {
   private readonly rim: THREE.Group;
   private readonly gridMat: THREE.MeshBasicMaterial;
   private readonly gridBase = new THREE.Color();
+  private readonly ring: THREE.Mesh;
+  private readonly ringMat: THREE.MeshBasicMaterial;
   private wrap = false;
 
   constructor(size: number) {
@@ -42,12 +45,13 @@ export class Board {
     tray.receiveShadow = true;
     this.group.add(tray);
 
-    // Tiles: standard material (cheaper than physical), low reflections so they never wash out.
+    // Tiles: standard material (cheaper than physical), low reflections so they read deep
+    // indigo on phones, not pink-lavender (review S2).
     const tileMat = new THREE.MeshStandardMaterial({
       color: palette.white,
-      roughness: 0.32,
+      roughness: 0.6,
       metalness: 0,
-      envMapIntensity: 0.4,
+      envMapIntensity: 0.2,
     });
     const tiles = new THREE.InstancedMesh(roundedBox(0.93, 0.12, 0.93, 0.04, 1), tileMat, size * size);
     const m = new THREE.Matrix4();
@@ -65,7 +69,7 @@ export class Board {
     tiles.receiveShadow = true;
     this.group.add(tiles);
 
-    // Neon grid: thin flat strips over the tile seams (bright enough to bloom).
+    // Neon grid: thin flat strips over the tile seams (kept below the bloom threshold).
     const strips: THREE.BufferGeometry[] = [];
     const width = 0.035;
     for (let k = 1; k < size; k++) {
@@ -118,7 +122,28 @@ export class Board {
       this.rim.add(rail);
     }
     this.group.add(this.rim);
+
+    // Meal ring: a thin mint ring that grows from the eaten cell and fades.
+    this.ringMat = new THREE.MeshBasicMaterial({
+      color: palette.mint,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    });
+    this.ring = new THREE.Mesh(new THREE.RingGeometry(0.4, 0.5, 40), this.ringMat);
+    this.ring.rotation.x = -Math.PI / 2;
+    this.ring.position.y = TILE_TOP + 0.008;
+    this.ring.renderOrder = 2;
+    this.ring.visible = false;
+    this.group.add(this.ring);
+
     this.setWrap(false);
+  }
+
+  /** Put the meal ring on a board position (world x, z). */
+  ringAt(x: number, z: number): void {
+    this.ring.position.x = x;
+    this.ring.position.z = z;
   }
 
   /** Walls (tall pink rim) or wrap-around edges (low sky-blue rim). */
@@ -135,13 +160,18 @@ export class Board {
   }
 
   /**
-   * Neon strength: `glow` 1 is normal, lower dims the grid (asleep), higher flashes it (a meal).
-   * Values above 1 push the colour past the bloom threshold.
+   * Neon strength: `glow` 1 is normal, lower dims the grid (asleep, paused). `flash` (0..1) is
+   * the meal flash: it lights the rim and the ring at the eaten cell, never the whole grid.
+   * `motion` is 0 with reduced motion (the ring fades but does not grow).
    */
-  setGlow(glow: number): void {
-    this.gridMat.color.copy(this.gridBase).multiplyScalar(0.6 + glow * 1.6);
-    this.gridMat.opacity = 0.35 + 0.25 * Math.min(1.5, glow);
-    this.rimMat.emissiveIntensity = 0.25 + 0.35 * glow;
+  setGlow(glow: number, flash = 0, motion = 1): void {
+    this.gridMat.color.copy(this.gridBase).multiplyScalar(gridLevel(glow));
+    this.gridMat.opacity = gridOpacity(glow);
+    this.rimMat.emissiveIntensity = rimLevel(glow, flash * motion);
+    const ring = ringLook(flash, motion);
+    this.ring.visible = ring.opacity > 0.01;
+    this.ring.scale.setScalar(ring.scale);
+    this.ringMat.opacity = ring.opacity;
   }
 }
 
