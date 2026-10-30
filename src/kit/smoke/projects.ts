@@ -114,6 +114,8 @@ export function kitPlaywrightConfig(
       toHaveScreenshot: { maxDiffPixelRatio: 0.02, animations: 'disabled', caret: 'hide' },
     },
     // Baselines are committed per project and platform.
+    // A missing baseline fails the run; create baselines on purpose with --update-snapshots.
+    updateSnapshots: 'none',
     snapshotPathTemplate: '{testDir}/screenshots/{projectName}-{platform}/{arg}{ext}',
     reporter: [['list']],
     // Each concurrent shard needs its own output folder, or their artifacts collide.

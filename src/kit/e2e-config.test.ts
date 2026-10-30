@@ -17,6 +17,7 @@ describe('e2e config', () => {
     expect(kitPlaywrightConfig(base, {}).outputDir).toBe('test-results');
     expect(kitPlaywrightConfig(base, { E2E_SHARD: '2' }).outputDir).toBe('test-results/shard-2');
     expect(kitPlaywrightConfig(base, { E2E_WORKERS: '3' }).workers).toBe(3);
+    expect(kitPlaywrightConfig(base, {}).updateSnapshots).toBe('none');
   });
 
   it('picks a hardware ANGLE backend per platform', () => {
