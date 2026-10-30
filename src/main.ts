@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Snake: boots the kit shell (left rail, audio, service worker) and the 3D stage, then wires the
  * game controller to the scene, sounds, HUD, overlays and the on-screen d-pad.
  *
@@ -15,6 +15,7 @@ import { storage } from './kit/storage';
 import { readTestMode } from './kit/test-mode';
 import { GameController, type ControllerEvents } from './controller';
 import { layoutInsets, type Insets } from './game/framing';
+import * as THREE from 'three';
 import { SNAKE_BLOOM_THRESHOLD } from './game/glow';
 import type { Cell } from './game/grid';
 import { MODE_ICON, MODE_LABEL, snakeIcon } from './icons';
@@ -208,7 +209,9 @@ const stage = createStage({
   label: 'Snake game board',
   fallback: { title: 'Snake', text: 'This game needs WebGL, which this browser does not offer.' },
   renderer: {
-    exposure: 0.95,
+    // Neutral keeps the pink rim pink and the snake green; ACES pushed both to white (g7).
+    toneMapping: THREE.NeutralToneMapping,
+    exposure: 0.85,
     bloom: { strength: 0.5, radius: 0.5, threshold: SNAKE_BLOOM_THRESHOLD },
     vignette: 0.3,
   },

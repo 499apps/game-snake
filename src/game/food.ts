@@ -10,10 +10,12 @@ export type FoodKind = 'apple' | 'gem' | 'berry';
 export const FOOD_KINDS: readonly FoodKind[] = ['apple', 'gem', 'berry'];
 /** A deeper blue than palette.sky: the pastel gem read as a white blob under bloom (review S3). */
 export const GEM_COLOR = '#3d8bfd';
+/** A deep violet: the pastel lavender berry read as a white blob (S10). */
+export const BERRY_COLOR = '#8f5bf0';
 export const FOOD_COLORS: Readonly<Record<FoodKind, string>> = {
   apple: palette.coral,
   gem: GEM_COLOR,
-  berry: palette.lavender,
+  berry: BERRY_COLOR,
 };
 
 /** The food kind for the n-th meal (a fixed rotation, no randomness). */
@@ -86,7 +88,8 @@ function gem(): THREE.Group {
 
 function berry(): THREE.Group {
   const g = new THREE.Group();
-  const mat = candyMaterial(palette.lavender, { emissive: palette.lavender, emissiveIntensity: 0.4 });
+  const mat = candyMaterial(BERRY_COLOR, { emissive: BERRY_COLOR, emissiveIntensity: 0.15 });
+  mat.envMapIntensity = 0.5;
   const geo = new THREE.SphereGeometry(0.17, 22, 16);
   const spots: Array<[number, number, number]> = [
     [-0.12, -0.04, 0.06],

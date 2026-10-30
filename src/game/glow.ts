@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Board glow levels (pure, unit tested). The meal flash lights the rim and a small ring at the
  * eaten cell; the grid itself stays below the bloom threshold, so the snake and the next food
  * never disappear in a mint wash (review S1).
@@ -21,7 +21,7 @@ export function gridOpacity(glow: number): number {
 
 /** Rim emissive intensity: base glow plus the meal flash (0..1, already scaled by motion). */
 export function rimLevel(glow: number, flash: number): number {
-  return 0.25 + 0.35 * Math.max(0, glow) + 0.45 * Math.min(1, Math.max(0, flash));
+  return 0.08 + 0.14 * Math.max(0, glow) + 0.5 * Math.min(1, Math.max(0, flash));
 }
 
 /** Bloom strength factor during a meal flash; 1 with reduced motion. */

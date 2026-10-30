@@ -141,6 +141,8 @@ export class SnakeScene {
     kit.shadowLights.push(lights.key);
     // The pink fill point light turned the indigo tiles pink-lavender on phones (review S2).
     lights.fill.intensity = 10;
+    // The near-white sky light lit the top of the tube to pale mint (S2-g7).
+    lights.hemi.intensity = 0.7;
 
     const room = makeRoom(scene, {
       floorColor: mixHex(palette.plum, palette.night, 0.35),
@@ -182,9 +184,9 @@ export class SnakeScene {
       vertexColors: true,
       roughness: 0.36,
       metalness: 0,
-      clearcoat: 0.85,
+      clearcoat: 0.5,
       clearcoatRoughness: 0.12,
-      envMapIntensity: 0.55,
+      envMapIntensity: 0.3,
       clippingPlanes: [
         new THREE.Plane(new THREE.Vector3(-1, 0, 0), h),
         new THREE.Plane(new THREE.Vector3(1, 0, 0), h),
@@ -204,9 +206,9 @@ export class SnakeScene {
     }
 
     const headMat = candyMaterial(SNAKE_COLORS.main, { roughness: 0.36, sheen: 0 });
-    headMat.clearcoat = 0.85;
+    headMat.clearcoat = 0.5;
     headMat.clearcoatRoughness = 0.12;
-    headMat.envMapIntensity = 0.55;
+    headMat.envMapIntensity = 0.3;
     this.head = new HeadRig(headMat);
     scene.add(this.head.group);
 

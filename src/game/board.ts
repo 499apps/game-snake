@@ -102,7 +102,10 @@ export class Board {
       emissive: palette.bubblegum,
       emissiveIntensity: 0.55,
       roughness: 0.25,
+      // Soft gloss: a mirror coat plus env light read white, so the mode colour was lost (S9).
+      clearcoat: 0.4,
     });
+    this.rimMat.envMapIntensity = 0.35;
     this.rim = new THREE.Group();
     const len = size + RIM * 2;
     const off = this.half + RIM / 2;
@@ -149,7 +152,8 @@ export class Board {
   /** Walls (tall pink rim) or wrap-around edges (low sky-blue rim). */
   setWrap(wrap: boolean): void {
     this.wrap = wrap;
-    const c = wrap ? palette.sky : palette.bubblegum;
+    // A touch of night keeps the rim sky blue (wrap) or pink (walls) under light and bloom (S9).
+    const c = wrap ? mixHex(palette.sky, palette.night, 0.25) : mixHex(palette.bubblegum, palette.night, 0.2);
     this.rimMat.color.set(c);
     this.rimMat.emissive.set(c);
     this.rim.scale.y = wrap ? 0.45 : 1;
