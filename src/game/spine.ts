@@ -30,13 +30,25 @@ export class Spine {
   private readonly dz: Float32Array;
   private dense = 0;
 
+  /** Arc length at the tail end that gets extra samples (0 = none). */
+  readonly tipLength: number;
+  /** Extra samples in the tip region; they crowd toward the tip so a round cap stays smooth. */
+  readonly tipSamples: number;
+
   /**
    * @param maxPoints most polyline points build() will receive
    * @param spacing distance between samples (cells)
+   * @param tip optional tail refinement: `samples` rings over the last `length` cells
    */
-  constructor(maxPoints: number, spacing: number) {
+  constructor(
+    maxPoints: number,
+    spacing: number,
+    tip: { length: number; samples: number } = { length: 0, samples: 0 },
+  ) {
     this.spacing = spacing;
-    this.maxSamples = Math.ceil(maxPoints / spacing) + 2;
+    this.tipLength = Math.max(0, tip.length);
+    this.tipSamples = this.tipLength > 0 ? Math.max(0, Math.floor(tip.samples)) : 0;
+    this.maxSamples = Math.ceil(maxPoints / spacing) + 2 + this.tipSamples;
     this.x = new Float32Array(this.maxSamples);
     this.z = new Float32Array(this.maxSamples);
     this.tx = new Float32Array(this.maxSamples);
@@ -60,6 +72,13 @@ export class Spine {
     this.dx[n] = x;
     this.dz[n] = z;
     this.dense = n + 1;
+  }
+
+  /** Arc length of target `i` (1-based): even steps first, then the tip rings. */
+  private target(i: number, nReg: number, tipStart: number, tipLen: number, tipN: number): number {
+    if (i <= nReg) return i * this.spacing;
+    const k = (i - nReg - 1) / tipN;
+    return tipStart + tipLen * Math.sin(k * Math.PI * 0.5);
   }
 
   /**
@@ -131,9 +150,27 @@ export class Spine {
       this.length = 0;
       return;
     }
+    // Arc-length targets: an even spacing up to the tip region, then (optional) tip samples that
+    // crowd toward the end like rings on a hemisphere. No target sits within a quarter spacing
+    // of the region after it, so no two rings bunch up.
+    let total = 0;
+    for (let i = 1; i < d; i++) {
+      total += Math.hypot(
+        (this.dx[i] as number) - (this.dx[i - 1] as number),
+        (this.dz[i] as number) - (this.dz[i - 1] as number),
+      );
+    }
+    const tipLen = Math.min(this.tipLength, total);
+    const tipN = tipLen > 0 ? this.tipSamples : 0;
+    const tipStart = total - tipLen;
+    const regularEnd = (tipN > 0 ? tipStart : total) - this.spacing * 0.25;
+    const nReg = regularEnd > 0 ? Math.floor(regularEnd / this.spacing + 1e-9) : 0;
+    const nTargets = nReg + tipN;
+
     let count = 1;
     let walked = 0;
-    let next = this.spacing;
+    let ti = 1;
+    let next = nTargets > 0 ? this.target(1, nReg, tipStart, tipLen, tipN) : Infinity;
     let segTx = 1;
     let segTz = 0;
     for (let i = 1; i < d; i++) {
@@ -150,20 +187,21 @@ export class Spine {
         this.tz[0] = segTz;
       }
       while (next <= walked + len && count < this.maxSamples - 1) {
-        const f = (next - walked) / len;
-        this.x[count] = x0 + (x1 - x0) * f;
-        this.z[count] = z0 + (z1 - z0) * f;
-        this.tx[count] = segTx;
-        this.tz[count] = segTz;
-        this.s[count] = next;
-        count++;
-        next += this.spacing;
+        if (next > (this.s[count - 1] as number) + 1e-4) {
+          const f = (next - walked) / len;
+          this.x[count] = x0 + (x1 - x0) * f;
+          this.z[count] = z0 + (z1 - z0) * f;
+          this.tx[count] = segTx;
+          this.tz[count] = segTz;
+          this.s[count] = next;
+          count++;
+        }
+        ti++;
+        next = ti <= nTargets ? this.target(ti, nReg, tipStart, tipLen, tipN) : Infinity;
       }
       walked += len;
     }
-    // The tail tip lands exactly on the last point (skip a sample that is almost on top of it).
-    const last = count - 1;
-    if (walked - (this.s[last] as number) < this.spacing * 0.25 && last > 0) count = last;
+    // The tail tip lands exactly on the last point.
     this.x[count] = this.dx[d - 1] as number;
     this.z[count] = this.dz[d - 1] as number;
     this.tx[count] = segTx;
@@ -172,6 +210,22 @@ export class Spine {
     this.count = count + 1;
     this.length = walked;
   }
+}
+
+/** Radius of the round tail tip (a half sphere), in cells. */
+export const TIP_RADIUS = 0.085;
+
+/**
+ * Tail radius profile: the body radius `rb` eases down to TIP_RADIUS over `taper` cells, then a
+ * half sphere of radius TIP_RADIUS closes the tail. `toTip` is the arc length to the tip. The two
+ * parts meet with the same radius and a flat slope; the result is 0 at the tip.
+ */
+export function tailRadius(rb: number, toTip: number, taper: number): number {
+  const d = Math.max(0, toTip);
+  if (d < TIP_RADIUS) return Math.sqrt(d * (2 * TIP_RADIUS - d));
+  const t = Math.min(1, (d - TIP_RADIUS) / Math.max(1e-6, taper));
+  const e = t * t * (3 - 2 * t);
+  return TIP_RADIUS + (rb - TIP_RADIUS) * e;
 }
 
 /** Length of a plain polyline [x0, z0, x1, z1, ...] (tests and sanity checks). */

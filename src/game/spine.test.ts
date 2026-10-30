@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
-import { CORNER_RADIUS, Spine, polylineLength } from './spine';
+import { CORNER_RADIUS, Spine, TIP_RADIUS, polylineLength, tailRadius } from './spine';
 
 const SPACING = 0.2;
 
@@ -44,6 +44,60 @@ describe('Spine', () => {
     expect(sp.count).toBe(0);
   });
 
+  it('adds tip rings that crowd toward the tail end', () => {
+    const tip = { length: 0.1, samples: 6 };
+    const sp = new Spine(8, SPACING, tip);
+    sp.build(flat([[0, 0], [1, 0], [2, 0], [3, 0]]), 4);
+    expect(sp.length).toBeCloseTo(3, 5);
+    expect(sp.s[sp.count - 1]).toBeCloseTo(3, 5);
+    expect(sp.x[sp.count - 1]).toBeCloseTo(3);
+    // Six rings inside the tip region, plus the exact end point.
+    const inTip: number[] = [];
+    for (let i = 0; i < sp.count; i++) {
+      if ((sp.s[i] as number) >= 3 - tip.length - 1e-6) inTip.push(sp.s[i] as number);
+    }
+    expect(inTip.length).toBe(tip.samples + 1);
+    // Gaps shrink toward the tip.
+    for (let i = 2; i < inTip.length; i++) {
+      const prev = (inTip[i - 1] as number) - (inTip[i - 2] as number);
+      const gap = (inTip[i] as number) - (inTip[i - 1] as number);
+      expect(gap).toBeLessThanOrEqual(prev + 1e-6);
+    }
+    // No regular sample bunches up against the tip region.
+    const before = sp.s[sp.count - 1 - inTip.length] as number;
+    expect((inTip[0] as number) - before).toBeGreaterThan(SPACING * 0.2);
+  });
+
+  it('handles a path shorter than the tip region', () => {
+    const sp = new Spine(4, SPACING, { length: 0.5, samples: 5 });
+    sp.build(flat([[0, 0], [0.3, 0]]), 2);
+    expect(sp.s[0]).toBe(0);
+    expect(sp.s[sp.count - 1]).toBeCloseTo(0.3, 5);
+    for (let i = 1; i < sp.count; i++) {
+      expect(sp.s[i] as number).toBeGreaterThan(sp.s[i - 1] as number);
+    }
+  });
+
+  it('keeps tip rings inside the buffers on any grid walk (property)', () => {
+    const step = fc.constantFrom<[number, number]>([1, 0], [-1, 0], [0, 1], [0, -1]);
+    fc.assert(
+      fc.property(fc.array(step, { minLength: 1, maxLength: 30 }), (steps) => {
+        const cells: Array<[number, number]> = [[0, 0]];
+        for (const [sx, sz] of steps) {
+          const [lx, lz] = cells[cells.length - 1] as [number, number];
+          cells.push([lx + sx, lz + sz]);
+        }
+        const sp = new Spine(cells.length, SPACING, { length: TIP_RADIUS, samples: 6 });
+        sp.build(flat(cells), cells.length);
+        expect(sp.count).toBeLessThanOrEqual(sp.maxSamples);
+        expect(sp.s[sp.count - 1]).toBeCloseTo(sp.length, 5);
+        for (let i = 1; i < sp.count; i++) {
+          expect(sp.s[i] as number).toBeGreaterThan(sp.s[i - 1] as number);
+        }
+      }),
+    );
+  });
+
   it('stays within the buffers and keeps unit tangents on any grid walk (property)', () => {
     const step = fc.constantFrom<[number, number]>([1, 0], [-1, 0], [0, 1], [0, -1]);
     const walk = fc.array(step, { minLength: 1, maxLength: 40 });
@@ -71,6 +125,40 @@ describe('Spine', () => {
           if (i > 0) expect(sp.s[i] as number).toBeGreaterThanOrEqual(sp.s[i - 1] as number);
         }
       }),
+    );
+  });
+});
+
+describe('tailRadius', () => {
+  const RB = 0.24;
+  const TAPER = 1.6;
+
+  it('closes to a point at the tip and reaches the body radius after the taper', () => {
+    expect(tailRadius(RB, 0, TAPER)).toBe(0);
+    expect(tailRadius(RB, TIP_RADIUS, TAPER)).toBeCloseTo(TIP_RADIUS, 6);
+    expect(tailRadius(RB, TIP_RADIUS + TAPER, TAPER)).toBeCloseTo(RB, 6);
+    expect(tailRadius(RB, 10, TAPER)).toBeCloseTo(RB, 6);
+  });
+
+  it('ends in a half sphere, not a wedge', () => {
+    // On a half sphere of radius R, r^2 + (R - d)^2 = R^2.
+    for (const d of [0.01, 0.03, 0.05, 0.08]) {
+      const r = tailRadius(RB, d, TAPER);
+      expect(r * r + (TIP_RADIUS - d) ** 2).toBeCloseTo(TIP_RADIUS * TIP_RADIUS, 8);
+    }
+  });
+
+  it('never shrinks as you move away from the tip (property)', () => {
+    fc.assert(
+      fc.property(
+        fc.double({ min: 0, max: 4, noNaN: true }),
+        fc.double({ min: 0, max: 4, noNaN: true }),
+        (a, b) => {
+          const lo = Math.min(a, b);
+          const hi = Math.max(a, b);
+          expect(tailRadius(RB, hi, TAPER)).toBeGreaterThanOrEqual(tailRadius(RB, lo, TAPER) - 1e-9);
+        },
+      ),
     );
   });
 });

@@ -87,6 +87,9 @@ export function probeTier(info: DeviceInfo): Tier {
 /** Renderer strings of software rasterisers (headless browsers, VMs, CI hosts without a GPU). */
 export const SOFTWARE_GPU_PATTERN = /swiftshader|llvmpipe|lavapipe|softpipe|software|basic render/i;
 
+/** Renderer strings of integrated GPUs that should not start on the high tier. */
+export const INTEGRATED_GPU_PATTERN = /intel\(r\)? (uhd|hd|iris)|intel.*(uhd|hd graphics|iris)/i;
+
 /** True when the WebGL renderer string names a software rasteriser. */
 export function isSoftwareGpu(name: string | null | undefined): boolean {
   return typeof name === 'string' && SOFTWARE_GPU_PATTERN.test(name);
@@ -110,7 +113,11 @@ export function pickStartTier(i: StartTierInput): Tier {
   if (i.override) return i.override;
   if (isSoftwareGpu(i.gpuName)) return 'low';
   if (i.frozen) return 'medium';
-  return probeTier(i.device);
+  const start = probeTier(i.device);
+  // Integrated Intel GPUs sit right at 16.7 ms with 2048 shadows and DPR 2; start them one
+  // tier down so the first seconds hold 60 fps before the frame monitor has a full window.
+  if (start === 'high' && INTEGRATED_GPU_PATTERN.test(i.gpuName)) return 'medium';
+  return start;
 }
 
 export function median(values: readonly number[]): number {

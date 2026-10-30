@@ -1,6 +1,7 @@
 /**
  * The snake body: one smooth tube mesh, rebuilt in place every frame from the spine samples
- * (no allocation per frame). Candy stripes and a cream belly come from vertex colours.
+ * (no allocation per frame). Segment bands and a warm belly come from vertex colours; normals
+ * follow the radius profile so the rounded tail tip shades smoothly.
  */
 import * as THREE from 'three';
 
@@ -105,10 +106,21 @@ export class SnakeTube {
       const cz = f.z[j] as number;
       const cy = f.y[j] as number;
       const r = f.radius[j] as number;
+      const tx = f.tx[j] as number;
+      const tz = f.tz[j] as number;
       // Side vector: horizontal, at right angles to the tangent. Up is +y.
-      const sx = f.tz[j] as number;
-      const sz = -(f.tx[j] as number);
-      // Soft candy stripes along the body.
+      const sx = tz;
+      const sz = -tx;
+      // Normals lean along the tangent where the radius changes (dr/ds), so the tapered tail and
+      // its round tip shade as a dome. The last ring of a closed tip points straight back.
+      const a = Math.max(0, j - 1);
+      const b = Math.min(rings - 1, j + 1);
+      const ds = (f.s[b] as number) - (f.s[a] as number);
+      const slope = ds > 1e-6 ? ((f.radius[b] as number) - (f.radius[a] as number)) / ds : 0;
+      const tipEnd = j === rings - 1 && r < 1e-3;
+      const inv = tipEnd ? 0 : 1 / Math.sqrt(1 + slope * slope);
+      const lean = tipEnd ? 1 : -slope * inv;
+      // Segment shading: one soft band per cell along the body.
       const band = 0.5 + 0.5 * Math.cos((f.s[j] as number) * Math.PI * 2);
       const k0 = band * band * band;
       const rr = m.r + (st.r - m.r) * k0;
@@ -124,9 +136,9 @@ export class SnakeTube {
         pos[i] = cx + nx * r;
         pos[i + 1] = cy + ny * r;
         pos[i + 2] = cz + nz * r;
-        nrm[i] = nx;
-        nrm[i + 1] = ny;
-        nrm[i + 2] = nz;
+        nrm[i] = nx * inv + tx * lean;
+        nrm[i + 1] = ny * inv;
+        nrm[i + 2] = nz * inv + tz * lean;
         // Cream belly on the underside.
         const kb = Math.min(1, Math.max(0, (-s - 0.15) * 2.2));
         col[i] = rr + (be.r - rr) * kb;

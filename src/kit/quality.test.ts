@@ -196,3 +196,17 @@ describe('FrameMonitor', () => {
     );
   });
 });
+
+describe('integrated GPU start tier', () => {
+  const desktop = { cores: 8, memoryGb: 16, dpr: 1, isMobile: false, width: 1280, height: 720 };
+  it('starts integrated Intel GPUs on medium instead of high', () => {
+    const intel = 'ANGLE (Intel, Intel(R) UHD Graphics (0x00004626) Direct3D11 vs_5_0 ps_5_0, D3D11)';
+    expect(pickStartTier({ override: null, frozen: false, gpuName: intel, device: desktop })).toBe('medium');
+    expect(pickStartTier({ override: null, frozen: false, gpuName: 'Intel Iris OpenGL Engine', device: desktop })).toBe('medium');
+  });
+  it('keeps discrete GPUs on the probed tier, and the URL override still wins', () => {
+    const nv = 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+    expect(pickStartTier({ override: null, frozen: false, gpuName: nv, device: desktop })).toBe('high');
+    expect(pickStartTier({ override: 'high', frozen: false, gpuName: 'Intel(R) UHD Graphics 620', device: desktop })).toBe('high');
+  });
+});

@@ -24,7 +24,7 @@ import { BOARD_BOTTOM, Board, TILE_TOP, makeToys } from './game/board';
 import { FOOD_COLORS, Food, foodKindFor, makeGlowTexture } from './game/food';
 import { boardPoints, frameCamera, pitchFor, type Insets } from './game/framing';
 import { HeadRig } from './game/head';
-import { Spine } from './game/spine';
+import { Spine, TIP_RADIUS, tailRadius } from './game/spine';
 import { SnakeTube } from './game/tube';
 import { MODE_RULES, type Mode, type SnakeState } from './logic';
 
@@ -39,6 +39,20 @@ const HEAD_Y = TILE_TOP + 0.37;
 /** Coil spiral: inner radius and gap between turns. */
 const COIL_R0 = 0.3;
 const COIL_B = 0.82 / (Math.PI * 2);
+/** Tail taper length (cells). */
+const TAIL_LEN = 1.6;
+/** Extra rings on the tail tip so the half sphere stays smooth. */
+const TIP_RINGS = 6;
+
+/**
+ * Snake colours: a saturated, friendly green with darker segment bands and a warm belly. Strong
+ * enough to stay green under bloom and reflections (the pastel lime read near-white).
+ */
+const SNAKE_COLORS = {
+  main: '#2fc45a',
+  band: '#178a45',
+  belly: '#ffd98a',
+} as const;
 
 export interface SceneOptions {
   reducedMotion: boolean;
@@ -140,7 +154,7 @@ export class SnakeScene {
     // Body: one tube drawn in up to MAX_COPIES places, clipped to the board edges, so a snake
     // that wraps around slides out of one side and into the other.
     const maxPoints = o.size * o.size + 2;
-    this.spine = new Spine(maxPoints, SPACING);
+    this.spine = new Spine(maxPoints, SPACING, { length: TIP_RADIUS, samples: TIP_RINGS });
     this.pts = new Float32Array(maxPoints * 2);
     const ms = this.spine.maxSamples;
     this.fx = new Float32Array(ms);
@@ -150,21 +164,20 @@ export class SnakeScene {
     this.fr = new Float32Array(ms);
     this.fy = new Float32Array(ms);
     this.tube = new SnakeTube(ms, RADIAL, {
-      main: palette.lime,
-      stripe: mixHex(palette.mint, palette.lime, 0.25),
-      belly: palette.cream,
+      main: SNAKE_COLORS.main,
+      stripe: SNAKE_COLORS.band,
+      belly: SNAKE_COLORS.belly,
     });
     const h = this.half;
+    // No white sheen and softer reflections: they washed the green out to near-white.
     this.bodyMat = new THREE.MeshPhysicalMaterial({
       color: palette.white,
       vertexColors: true,
-      roughness: 0.3,
+      roughness: 0.36,
       metalness: 0,
-      clearcoat: 1,
-      clearcoatRoughness: 0.08,
-      sheen: 0.25,
-      sheenColor: new THREE.Color(palette.white),
-      envMapIntensity: 0.85,
+      clearcoat: 0.85,
+      clearcoatRoughness: 0.12,
+      envMapIntensity: 0.55,
       clippingPlanes: [
         new THREE.Plane(new THREE.Vector3(-1, 0, 0), h),
         new THREE.Plane(new THREE.Vector3(1, 0, 0), h),
@@ -183,7 +196,11 @@ export class SnakeScene {
       scene.add(mesh);
     }
 
-    this.head = new HeadRig(candyMaterial(palette.lime, { roughness: 0.3 }));
+    const headMat = candyMaterial(SNAKE_COLORS.main, { roughness: 0.36, sheen: 0 });
+    headMat.clearcoat = 0.85;
+    headMat.clearcoatRoughness = 0.12;
+    headMat.envMapIntensity = 0.55;
+    this.head = new HeadRig(headMat);
     scene.add(this.head.group);
 
     this.particles = new ParticleSystem(rng, { max: 180, particleScale: kit.settings.particleScale });
@@ -387,22 +404,27 @@ export class SnakeScene {
     this.bulges = kept;
     const breathe = asleep ? Math.sin(t * 1.8) * 0.045 * this.motion : 0;
     const swell = 1 + 0.07 * this.eatPulse * this.motion;
+    const taper = Math.min(TAIL_LEN, L * 0.55);
     for (let i = 0; i < count; i++) {
       const sa = this.spine.s[i] as number;
       const u = L > 0 ? sa / L : 0;
-      let r = RADIUS * (1 - 0.32 * u);
       const toTip = L - sa;
-      if (toTip < 0.7) r *= Math.sqrt(Math.max(0, toTip) / 0.7);
+      let r = tailRadius(RADIUS * (1 - 0.25 * u), toTip, taper);
+      // Bulges fade out before the tip so the round end keeps its shape.
+      const tipFade = clamp((toTip - TIP_RADIUS) / 0.5, 0, 1);
       for (const pos of bulgeAt) {
-        const amp = 0.1 * clamp(pos + 1, 0, 1) * (1 - 0.5 * u);
+        const amp = 0.1 * clamp(pos + 1, 0, 1) * (1 - 0.5 * u) * tipFade;
         const c = Math.max(pos, 0.45);
         const d = sa - c;
         r += amp * Math.exp(-(d * d) / 0.1);
       }
-      r *= swell * (1 + breathe * Math.sin(sa * 0.9 - t * 1.8));
-      r = Math.max(0.012, r);
+      const k = swell * (1 + breathe * Math.sin(sa * 0.9 - t * 1.8));
+      r *= k;
+      const tip = i === count - 1 && count > 1;
+      r = tip ? 0 : Math.max(0.012, r);
       this.fr[i] = r;
-      this.fy[i] = TILE_TOP + r * 0.92;
+      // Rest on the tiles; the tip cap keeps the height of its base so it stays round.
+      this.fy[i] = TILE_TOP + Math.max(r, TIP_RADIUS * k) * 0.92;
     }
     this.tube.update({
       x: this.fx,
