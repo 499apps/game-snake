@@ -103,6 +103,32 @@
   margin-left: 6px;
 }
 
+/* Touchpad hint under Play: only on hovering, precise pointers (laptop touchpad, Magic Trackpad). */
+.snake-hint {
+  position: absolute;
+  left: var(--snake-start-x, 50%);
+  top: calc(var(--snake-start-y, 70%) + 62px);
+  display: none;
+  margin: 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(20, 16, 56, 0.78);
+  color: var(--g499-cream);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  pointer-events: none;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .snake-hint {
+    display: block;
+  }
+}
+
 /* Speed button beside Play: a 56px target that cycles Easy, Normal, Fast (review S5). */
 .snake-mode-btn {
   position: absolute;
@@ -250,7 +276,9 @@
   -webkit-backdrop-filter: blur(8px);
   cursor: pointer;
   touch-action: none;
-  transition: transform 90ms ease-out, background 90ms ease-out;
+  transition:
+    transform 90ms ease-out,
+    background 90ms ease-out;
   -webkit-tap-highlight-color: transparent;
 }
 

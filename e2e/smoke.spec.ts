@@ -60,7 +60,8 @@ function towardFood(s: SnakeTestState): SwipeDirection | null {
   const wants: SwipeDirection[] = [];
   const h: SwipeDirection | null = dx > 0 ? 'right' : dx < 0 ? 'left' : null;
   const v: SwipeDirection | null = dy > 0 ? 'down' : dy < 0 ? 'up' : null;
-  if (Math.abs(dx) >= Math.abs(dy)) wants.push(...[h, v].filter((d): d is SwipeDirection => d !== null));
+  if (Math.abs(dx) >= Math.abs(dy))
+    wants.push(...[h, v].filter((d): d is SwipeDirection => d !== null));
   else wants.push(...[v, h].filter((d): d is SwipeDirection => d !== null));
   // Food straight behind: side-step toward the middle of the board first.
   wants.push(s.head.y > 5 ? 'up' : 'down', s.head.x > 5 ? 'left' : 'right');
@@ -124,6 +125,68 @@ test.describe('snake round', () => {
     const tick = s.tick;
     await stepFrames(page, 60);
     expect((await readState<SnakeTestState>(page)).tick).toBe(tick);
+
+    await guard.assertClean();
+  });
+});
+
+test.describe('touchpad steering', () => {
+  test('a finger glide with no click, and a two-finger swipe, steer the snake', async ({
+    page,
+    baseURL,
+    hasTouch,
+  }) => {
+    test.skip(hasTouch, 'touchpad glides are a hovering-pointer (laptop) input');
+    const guard = guardPage(page, page.context(), baseURL ?? 'http://localhost');
+    await page.goto('/games/snake/?test=1');
+    await waitForReady(page);
+    test.fixme(
+      !(await hasWebgl(page)),
+      'WebGL is not available in this engine on this host, so the game loop does not run',
+    );
+    await expect(page.locator('#touchpad-hint')).toBeVisible();
+    await expect(page.locator('#touchpad-hint')).toHaveText(/finger on the touchpad to steer/);
+
+    const box = await page.locator('#stage canvas').boundingBox();
+    if (!box) throw new Error('no stage canvas');
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    await page.mouse.move(cx, cy);
+
+    // Gliding before the round starts does not start it (no accidental starts).
+    await page.mouse.move(cx + 80, cy, { steps: 8 });
+    let s = await readState<SnakeTestState>(page);
+    expect(s.phase).toBe('ready');
+
+    await page.keyboard.press('ArrowUp');
+    await stepFrames(page, s.stepFrames + 1);
+    s = await readState<SnakeTestState>(page);
+    expect(s.phase).toBe('playing');
+    expect(s.dir).toBe('up');
+
+    // One finger glides left with no button pressed: the snake turns left.
+    await page.mouse.move(cx - 60, cy + 4, { steps: 8 });
+    s = await readState<SnakeTestState>(page);
+    expect(s.queued, 'the glide queued a turn').toBe(1);
+    await stepFrames(page, s.stepFrames + 1);
+    s = await readState<SnakeTestState>(page);
+    expect(s.dir).toBe('left');
+    expect(s.phase).toBe('playing');
+
+    // Two fingers swipe up (natural scrolling: the page scrolls down, deltaY > 0).
+    await page.waitForTimeout(250);
+    await page.mouse.wheel(0, 80);
+    await expect.poll(async () => (await readState<SnakeTestState>(page)).queued).toBe(1);
+    await stepFrames(page, s.stepFrames + 1);
+    s = await readState<SnakeTestState>(page);
+    expect(s.dir).toBe('up');
+
+    // A glide never reverses the snake into its neck.
+    await page.waitForTimeout(250);
+    await page.mouse.move(cx - 60, cy + 80, { steps: 8 });
+    s = await readState<SnakeTestState>(page);
+    expect(s.queued).toBe(0);
+    expect(s.dir).toBe('up');
 
     await guard.assertClean();
   });

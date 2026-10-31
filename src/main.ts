@@ -2,8 +2,8 @@
  * Snake: boots the kit shell (left rail, audio, service worker) and the 3D stage, then wires the
  * game controller to the scene, sounds, HUD, overlays and the on-screen d-pad.
  *
- * Controls: swipe, arrows, WASD, the d-pad or a gamepad steer; tap, Space or A starts and
- * pauses. Mode, pause, restart, d-pad, sound, home and clear-data live in the left rail.
+ * Controls: swipe, arrows, WASD, the d-pad, a gamepad or a touchpad (one finger gliding with no
+ * click, or a two-finger swipe) steer; tap, Space or A starts and pauses. Mode, pause, restart, d-pad, sound, home and clear-data live in the left rail.
  */
 import './kit/styles.css';
 import './game.css';
@@ -30,6 +30,7 @@ import {
 } from './logic';
 import { SnakeScene } from './scene';
 import { SnakeSounds } from './sound';
+import { attachTouchpadSteer } from './trackpad';
 
 const MODE_KEY = 'snake:mode';
 const DPAD_KEY = 'snake:dpad';
@@ -217,6 +218,21 @@ const stage = createStage({
   },
 });
 
+// Touchpad: a one-finger glide (no click) or a two-finger swipe steers while the round runs.
+const touchpad = attachTouchpadSteer({
+  surface: stage.canvas,
+  active: () => game.state.phase === 'playing' && !game.paused,
+  steer: (dir) => stage.input.emit(dir, 'pointer'),
+  ignore: [shell.menu.rail],
+});
+
+// Pointer lock ended by the browser (Esc, app switch) mid-round: pause so nothing surprises.
+document.addEventListener('pointerlockchange', () => {
+  if (!document.pointerLockElement && game.state.phase === 'playing' && !game.paused) {
+    setPaused(true);
+  }
+});
+
 // ---------- HUD, overlays, pops ----------
 
 function renderHud(): void {
@@ -259,6 +275,7 @@ function updateUi(): void {
   const showPause = s.phase === 'playing' && !game.paused;
   padPrimaryIcon.innerHTML = snakeIcon(showPause ? 'pause' : 'play', 'snake-pad-svg', true);
   padPrimary.setAttribute('aria-label', showPause ? 'Pause' : 'Play');
+  if (!showPause) touchpad.unlock();
   shell.menu.refresh();
   stage.requestRender();
 }
@@ -316,7 +333,8 @@ function measureInsets(): Insets {
     width: host.width,
     height: host.height,
     hudBottom: hudEl.getBoundingClientRect().bottom - host.top,
-    toggle: getComputedStyle(toggle).display !== 'none' ? rel(toggle.getBoundingClientRect()) : null,
+    toggle:
+      getComputedStyle(toggle).display !== 'none' ? rel(toggle.getBoundingClientRect()) : null,
     dpad: dpadEl.hidden ? null : rel(dpadEl.getBoundingClientRect()),
     safeRight: px(probe.paddingRight),
     safeBottom: px(probe.paddingBottom),
@@ -375,6 +393,13 @@ function setDpad(on: boolean): void {
 function primary(): void {
   game.primary();
   updateUi();
+  grabPointer();
+}
+
+/** Touchpad players: keep the cursor on the board while the round runs (from a click or key). */
+function grabPointer(): void {
+  if (testMode.enabled) return;
+  if (game.state.phase === 'playing' && !game.paused) touchpad.lock();
 }
 
 function steer(dir: Direction): void {
@@ -389,7 +414,10 @@ dpadEl.hidden = !dpadOn;
 
 if (stage.kit) {
   const kit = stage.kit;
-  const s = new SnakeScene(kit, stage.rng, { reducedMotion: shell.reducedMotion, size: BOARD_SIZE });
+  const s = new SnakeScene(kit, stage.rng, {
+    reducedMotion: shell.reducedMotion,
+    size: BOARD_SIZE,
+  });
   scene = s;
   s.reset(game.state);
   stage.run({
@@ -469,9 +497,15 @@ startModeBtn.addEventListener('click', () => {
   shell.synth.tick();
   setMode(nextMode(game.mode));
 });
-resumeButton.addEventListener('click', () => setPaused(false));
+resumeButton.addEventListener('click', () => {
+  setPaused(false);
+  grabPointer();
+});
 pauseOverlay.addEventListener('click', (e) => {
-  if (e.target === pauseOverlay) setPaused(false);
+  if (e.target === pauseOverlay) {
+    setPaused(false);
+    grabPointer();
+  }
 });
 againButton.addEventListener('click', () => {
   actions++;
@@ -480,6 +514,7 @@ againButton.addEventListener('click', () => {
     game.begin();
   }
   updateUi();
+  grabPointer();
 });
 
 // Opening the drawer on a phone pauses the round.
